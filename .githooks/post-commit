@@ -1,0 +1,7 @@
+#!/bin/sh
+branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || exit 0
+remote=$(git config --get branch."$branch".remote)
+[ -n "$remote" ] || remote=origin
+if git remote get-url "$remote" >/dev/null 2>&1; then
+  git push "$remote" HEAD
+fi

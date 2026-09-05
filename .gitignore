@@ -1,0 +1,28 @@
+.venv/
+.env
+*.log
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+# Local health data and exports must never be committed.
+data/
+exports/
+.local/
+# Garmin auth tokens live under ignored per-user data directories.
+.garminconnect/
+
+
+# Local cross-conversation context contains private machine/user details.
+DEEP_CONTEXT_HANDOFF.md
+# One-off private migration script is tied to local imported health data.
+scripts/import_legacy_health.py
+# AgentDock local delete backups / temporary agent workspaces.
+.agentdock-delete-backup-*/
+server/agent_workspace/
+
+# Android local/build output
+android/.gradle/
+android/.kotlin/
+android/local.properties
+android/**/build/
+*.apk
