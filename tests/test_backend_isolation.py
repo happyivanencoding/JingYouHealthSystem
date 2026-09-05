@@ -102,6 +102,17 @@ class BackendIsolationTests(unittest.TestCase):
         self.assertIsNone(auth.user_by_dev_alias("Owner Person"))
         self.assertIsNone(auth.user_by_dev_alias("Member Person"))
 
+        local_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"), headers={})
+        proxied_request = SimpleNamespace(
+            client=SimpleNamespace(host="127.0.0.1"),
+            headers={"cf-ray": "test-ray", "cf-connecting-ip": "203.0.113.10"},
+        )
+        self.assertTrue(app._loopback(local_request))
+        self.assertFalse(app._loopback(proxied_request))
+        with self.assertRaises(HTTPException) as exc:
+            app.dev_login("owner", proxied_request)
+        self.assertEqual(exc.exception.status_code, 404)
+
     def test_sessions_and_cloudflare_identity_map_to_distinct_users(self) -> None:
         owner_token = auth.issue_session(self.owner, "test")
         member_token = auth.issue_session(self.member, "test")

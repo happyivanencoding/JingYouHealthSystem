@@ -16,7 +16,7 @@ USB Android development uses:
 adb reverse tcp:8788 tcp:8788
 ```
 
-Production API is `https://health.thegreatnovel.com` through the existing remote-managed Cloudflare Tunnel. The hostname is provisioned and protected by a dedicated Cloudflare Access self-hosted application; unauthenticated requests are redirected to Cloudflare Access before they can reach FastAPI.
+Production API is `https://health.thegreatnovel.com` through the existing remote-managed Cloudflare Tunnel. Cloudflare Access protects only the identity-exchange route `https://health.thegreatnovel.com/api/mobile-auth/bridge`; after the browser exchange, normal native API requests go directly through the Tunnel and are authorized by the JingYou Bearer session. This avoids requiring the native HTTP client to carry the system browser's Cloudflare cookie.
 
 ## Authentication model
 
@@ -36,7 +36,7 @@ This is the isolation boundary between independent app accounts.
 POST /api/dev/login/{profile}
 ```
 
-Loopback-only development endpoint. The only accepted development aliases are `owner` and `member`; real display/profile names are not accepted as login selectors. The private local profile registry maps those aliases to real accounts. Production Android must use the Cloudflare mobile auth bridge instead of exposing a profile switcher.
+Loopback-only development endpoint. The only accepted development aliases are `owner` and `member`; real display/profile names are not accepted as login selectors. The private local profile registry maps those aliases to real accounts. Requests carrying Cloudflare proxy headers are rejected even though `cloudflared` reaches the origin from loopback, so this route is not usable through the public Tunnel. Production Android must use the Cloudflare mobile auth bridge instead of exposing a profile switcher.
 
 Response:
 
@@ -207,13 +207,14 @@ Completed:
 - SQLite request connections are explicitly closed; FastAPI no longer leaves `health.db` / `app.db` handles open after requests.
 - Latest-state queries skip empty Garmin placeholder rows so Coach does not incorrectly report synchronized metrics as missing.
 - `health.thegreatnovel.com` DNS and Tunnel ingress are provisioned on the existing `TGN` remote-managed tunnel and route to `127.0.0.1:8788`.
-- A dedicated Cloudflare Access application protects the Health hostname with one two-user email Allow policy; unauthenticated public requests are verified to redirect to Access.
+- A dedicated Cloudflare Access application protects only `/api/mobile-auth/bridge` with one two-user email Allow policy. Public boundary verification is: bridge `302 -> Access`, health check `200`, authenticated-data endpoint without JingYou Bearer `401`, and remote dev-login `404`.
 - Cloudflare Access JWT audience/team-domain runtime values are persisted in the Windows user environment and loaded by the backend startup script.
 - FastAPI is launched by the `JingYouHealthBackend` Windows scheduled task at user logon using `server/run-backend.ps1`; the task restarts on failure and ignores duplicate instances.
 
-Remaining backend work:
+Remaining integration / optional work:
 
-- Perform the first interactive production login from the Android/system-browser flow for each private account and verify the full `Cloudflare identity -> /api/mobile-auth/bridge -> JingYou session -> /api/me` round trip. This requires the human user's IdP/OTP interaction and cannot be completed by an unauthenticated backend probe.
+- Frontend production wiring: the current Android code already accepts the `jingyouhealth://auth?token=...` deep link, but its current build config still points API traffic at `http://127.0.0.1:8788` and its connect action still calls the USB dev-login route. The frontend owner must add a production base URL (`https://health.thegreatnovel.com`) and launch `/api/mobile-auth/bridge` in the system browser instead of changing backend auth.
+- After that wiring, perform the first interactive production login for each private account and verify the full `Cloudflare identity -> /api/mobile-auth/bridge -> JingYou session -> /api/me` round trip. This requires the human user's IdP/OTP interaction and cannot be completed by an unauthenticated backend probe.
 
 
 - Optionally add true streaming Coach events if the frontend wants backend-driven phase updates rather than local status animation.

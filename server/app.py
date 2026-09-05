@@ -65,7 +65,13 @@ def current_user(
 
 def _loopback(request: Request) -> bool:
     host = request.client.host if request.client else ""
-    return host in {"127.0.0.1", "::1", "localhost"}
+    cloudflare_proxy_headers = (
+        "cf-ray",
+        "cf-connecting-ip",
+        "cf-visitor",
+    )
+    came_through_cloudflare = any(request.headers.get(name) for name in cloudflare_proxy_headers)
+    return host in {"127.0.0.1", "::1", "localhost"} and not came_through_cloudflare
 
 
 @app.get("/api/healthz")
