@@ -1,8 +1,6 @@
 package com.thegreatnovel.jingyouhealth.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -32,7 +30,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.DirectionsRun
 import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Insights
@@ -337,9 +334,8 @@ fun FloatingHealthDock(
 ) {
     val items = listOf(
         Triple(RootTab.TODAY, Icons.Rounded.Home, tr("今日")),
-        Triple(RootTab.TRENDS, Icons.Rounded.Insights, tr("趋势")),
-        Triple(RootTab.ACTIVITIES, Icons.Rounded.DirectionsRun, tr("运动")),
         Triple(RootTab.COACH, Icons.Rounded.Forum, tr("教练")),
+        Triple(RootTab.TRENDS, Icons.Rounded.Insights, tr("趋势")),
     )
     GlassPanel(
         modifier = modifier.fillMaxWidth(),
@@ -347,7 +343,13 @@ fun FloatingHealthDock(
         padding = PaddingValues(6.dp),
         accent = tabColors(selected).first,
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(25.dp))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = if (LocalJingYouDarkTheme.current) 0.92f else 0.98f)),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
             items.forEach { (tab, icon, label) ->
                 DockItem(
                     modifier = Modifier.weight(1f),
@@ -382,12 +384,7 @@ private fun DockItem(
         tween(300),
         label = "dock-icon",
     )
-    val textColor by animateColorAsState(
-        if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-        tween(300),
-        label = "dock-text",
-    )
-    Row(
+    Box(
         modifier = modifier
             .clip(RoundedCornerShape(24.dp))
             .background(bg)
@@ -395,22 +392,14 @@ private fun DockItem(
                 if (!selected) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
-            .animateContentSize(spring(dampingRatio = 0.82f, stiffness = 460f))
-            .padding(horizontal = if (selected) 12.dp else 9.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center,
     ) {
         Box(contentAlignment = Alignment.Center) {
             if (selected) {
-                Box(Modifier.size(30.dp).clip(CircleShape).background(accent.copy(alpha = 0.08f)))
+                Box(Modifier.size(48.dp).clip(CircleShape).background(accent.copy(alpha = 0.11f)))
             }
-            Icon(icon, contentDescription = label, tint = iconColor, modifier = Modifier.size(20.dp))
-        }
-        AnimatedVisibility(selected) {
-            Row {
-                Spacer(Modifier.width(7.dp))
-                Text(label, style = MaterialTheme.typography.labelLarge, color = textColor, maxLines = 1)
-            }
+            Icon(icon, contentDescription = label, tint = iconColor, modifier = Modifier.size(27.dp))
         }
     }
 }
