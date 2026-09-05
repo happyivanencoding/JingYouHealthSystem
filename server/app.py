@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+from contextlib import contextmanager
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Annotated
@@ -26,7 +27,7 @@ from auth import (  # noqa: E402
     issue_session,
     resolve_session,
     revoke_session,
-    user_by_profile,
+    user_by_dev_alias,
 )
 from health_queries import activities, agent_context, dashboard, trends  # noqa: E402
 
@@ -78,9 +79,9 @@ def dev_login(profile: str, request: Request) -> dict[str, object]:
     # the phone appear as localhost. Production uses Cloudflare Access bridge.
     if not _loopback(request):
         raise HTTPException(status_code=404, detail="Not found")
-    user = user_by_profile(profile)
+    user = user_by_dev_alias(profile)
     if user is None:
-        raise HTTPException(status_code=404, detail="Unknown profile")
+        raise HTTPException(status_code=404, detail="Unknown development login alias")
     token = issue_session(user, "usb-dev")
     return {
         "token": token,
@@ -174,9 +175,17 @@ def refresh(user: UserContext = Depends(current_user)) -> dict[str, object]:
     return {"ok": True, "dashboard": dashboard(user)}
 
 
+@contextmanager
 def _thread_rows(user: UserContext):
     con = connect(user.health_db)
-    return con
+    try:
+        yield con
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
 @app.get("/api/chat/threads")
@@ -275,6 +284,7 @@ def _generate_coach_answer(user: UserContext, thread_id: str) -> tuple[str, dict
             "Read only context.json in the current workspace. Do not access any other file, path, command, network service, or tool.",
             "The last conversation item is the user's current question. Answer in the same language as that question.",
             "Use the supplied health data and conversation history as evidence. Distinguish observed data from interpretation.",
+            "For current/today questions, use the freshest meaningful measurement for each metric and respect its date/timestamp; if key metrics come from different dates, say so briefly.",
             "You may discuss recovery, sleep, training load, exercise planning, and health trends. Do not present medical diagnosis as fact.",
             "If the available data cannot support a conclusion, say what is missing rather than inventing it.",
             "Prefer a direct answer first, then the few data points that matter most, then an actionable recommendation.",

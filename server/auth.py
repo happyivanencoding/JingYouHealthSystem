@@ -4,6 +4,7 @@ import json
 import os
 import secrets
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -66,36 +67,40 @@ def user_by_email(email: str) -> UserContext | None:
     return next((user for user in all_users() if user.auth_email == needle), None)
 
 
-def user_by_profile(profile: str) -> UserContext | None:
-    needle = profile.strip().casefold()
-    for user in all_users():
-        if user.display_name.casefold() == needle:
-            return user
-        if needle == "owner" and user.role.casefold() == "owner":
-            return user
-        if needle == "member" and user.role.casefold() == "member":
-            return user
-    return None
+def user_by_dev_alias(alias: str) -> UserContext | None:
+    role = {"owner": "owner", "member": "member"}.get(alias.strip().casefold())
+    if role is None:
+        return None
+    matches = [user for user in all_users() if user.role.casefold() == role]
+    return matches[0] if len(matches) == 1 else None
 
 
-def _app_connection() -> sqlite3.Connection:
+@contextmanager
+def _app_connection():
     APP_DATA.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(APP_DB)
     con.row_factory = sqlite3.Row
-    con.executescript(
-        """
-        PRAGMA journal_mode=WAL;
-        CREATE TABLE IF NOT EXISTS sessions (
-            token TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            source TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-        """
-    )
-    return con
+    try:
+        con.executescript(
+            """
+            PRAGMA journal_mode=WAL;
+            CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                source TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+            """
+        )
+        yield con
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
 def issue_session(user: UserContext, source: str) -> str:

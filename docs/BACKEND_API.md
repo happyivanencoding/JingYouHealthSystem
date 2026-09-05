@@ -36,7 +36,7 @@ This is the isolation boundary between independent app accounts.
 POST /api/dev/login/{profile}
 ```
 
-Loopback-only development endpoint. Generic development aliases are `owner` and `member`; the private local profile registry maps them to real accounts. Production Android must use the Cloudflare mobile auth bridge instead of exposing a profile switcher.
+Loopback-only development endpoint. The only accepted development aliases are `owner` and `member`; real display/profile names are not accepted as login selectors. The private local profile registry maps those aliases to real accounts. Production Android must use the Cloudflare mobile auth bridge instead of exposing a profile switcher.
 
 Response:
 
@@ -89,7 +89,9 @@ GET /api/me
 GET /api/dashboard
 ```
 
-Returns the current user's latest normalized Garmin snapshot, including current/latest daily summary, HRV, sleep, Body Battery, Training Readiness when present, and recent activities.
+Returns the current user's latest normalized Garmin snapshot, including the latest meaningful daily summary, HRV, sleep, Body Battery, Training Readiness when present, and recent activities. Empty same-day placeholder rows created before Garmin has synchronized real values are skipped.
+
+The response also includes a `freshness` object with the source date/timestamp for each major component (`daily`, `hrv`, `sleep`, `body_battery`, `readiness`). Coach/current-state logic uses these component timestamps rather than assuming every metric belongs to the same calendar day.
 
 ### Trends
 
@@ -201,6 +203,9 @@ Completed:
 - Persistent chat threads/messages.
 - Scoped AgentDock ACP Coach answer generation.
 - Real ACP isolation test.
+- Backend regression tests for distinct sessions, Cloudflare identity mapping, physical health/chat DB isolation, and per-user ACP context.
+- SQLite request connections are explicitly closed; FastAPI no longer leaves `health.db` / `app.db` handles open after requests.
+- Latest-state queries skip empty Garmin placeholder rows so Coach does not incorrectly report synchronized metrics as missing.
 
 Remaining backend work:
 
