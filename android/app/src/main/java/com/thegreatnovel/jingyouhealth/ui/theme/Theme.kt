@@ -22,27 +22,28 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import com.thegreatnovel.jingyouhealth.model.ThemeMode
 
-val Mist = Color(0xFFF1F3FA)
-val Ceramic = Color(0xFFFAFBFF)
-val MistBlue = Color(0xFFE6EAF6)
-val Graphite = Color(0xFF111827)
-val GraphiteSoft = Color(0xFF566176)
-val ElectricCyan = Color(0xFF2BC7D9)
-val ArcticBlue = Color(0xFF4A7DFF)
-val AuroraViolet = Color(0xFF8367F7)
-val DeepViolet = Color(0xFF5B45CE)
-val Amber = Color(0xFFE6A55B)
-val Rose = Color(0xFFE47F91)
-val GlassLight = Color(0xBFFFFFFF)
-val GlassBorderLight = Color(0xD9FFFFFF)
+// Endel-inspired, low-saturation health palette: atmospheric rather than neon.
+val Mist = Color(0xFFF4F2EF)
+val Ceramic = Color(0xFFFBFAF8)
+val MistBlue = Color(0xFFE9E7E4)
+val Graphite = Color(0xFF1B1C22)
+val GraphiteSoft = Color(0xFF686A73)
+val ElectricCyan = Color(0xFF72C8C4)
+val ArcticBlue = Color(0xFF7187CC)
+val AuroraViolet = Color(0xFF9B84C4)
+val DeepViolet = Color(0xFF705B91)
+val Amber = Color(0xFFD2A16F)
+val Rose = Color(0xFFC87D86)
+val GlassLight = Color(0x99FFFFFF)
+val GlassBorderLight = Color(0x8CFFFFFF)
 
-val Void = Color(0xFF080B16)
-val NightBlue = Color(0xFF101526)
-val NightRaised = Color(0xFF171E32)
-val Frost = Color(0xFFF3F5FF)
-val FrostSoft = Color(0xFFABB5CB)
-val GlassDark = Color(0xA6212940)
-val GlassBorderDark = Color(0x33FFFFFF)
+val Void = Color(0xFF090B10)
+val NightBlue = Color(0xFF12151C)
+val NightRaised = Color(0xFF1A1D26)
+val Frost = Color(0xFFF2F0EC)
+val FrostSoft = Color(0xFFA9A6B0)
+val GlassDark = Color(0x801C202A)
+val GlassBorderDark = Color(0x24FFFFFF)
 
 private val LightColors = lightColorScheme(
     primary = ArcticBlue,

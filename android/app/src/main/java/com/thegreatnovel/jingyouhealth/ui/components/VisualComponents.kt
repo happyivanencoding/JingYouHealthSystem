@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -66,13 +67,18 @@ import com.thegreatnovel.jingyouhealth.ui.tr
 import com.thegreatnovel.jingyouhealth.ui.theme.Amber
 import com.thegreatnovel.jingyouhealth.ui.theme.ArcticBlue
 import com.thegreatnovel.jingyouhealth.ui.theme.AuroraViolet
+import com.thegreatnovel.jingyouhealth.ui.theme.Ceramic
+import com.thegreatnovel.jingyouhealth.ui.theme.DeepViolet
 import com.thegreatnovel.jingyouhealth.ui.theme.ElectricCyan
+import com.thegreatnovel.jingyouhealth.ui.theme.Graphite
 import com.thegreatnovel.jingyouhealth.ui.theme.GlassBorderDark
 import com.thegreatnovel.jingyouhealth.ui.theme.GlassBorderLight
 import com.thegreatnovel.jingyouhealth.ui.theme.GlassDark
 import com.thegreatnovel.jingyouhealth.ui.theme.GlassLight
 import com.thegreatnovel.jingyouhealth.ui.theme.LocalJingYouDarkTheme
 import com.thegreatnovel.jingyouhealth.ui.theme.Mist
+import com.thegreatnovel.jingyouhealth.ui.theme.MistBlue
+import com.thegreatnovel.jingyouhealth.ui.theme.NightBlue
 import com.thegreatnovel.jingyouhealth.ui.theme.Rose
 import com.thegreatnovel.jingyouhealth.ui.theme.Void
 
@@ -92,67 +98,89 @@ fun DynamicAmbientBackdrop(
     tab: RootTab,
     modifier: Modifier = Modifier,
     energy: Float = 0.7f,
+    stress: Float? = null,
+    sleepScore: Float? = null,
 ) {
     val dark = LocalJingYouDarkTheme.current
-    val (c1Raw, c2Raw, c3Raw) = tabColors(tab)
-    val c1 by animateColorAsState(c1Raw, tween(650), label = "ambient-c1")
-    val c2 by animateColorAsState(c2Raw, tween(650), label = "ambient-c2")
-    val c3 by animateColorAsState(c3Raw, tween(650), label = "ambient-c3")
+    val recovery = energy.coerceIn(0f, 1f)
+    val stressLevel = ((stress ?: 26f) / 100f).coerceIn(0f, 1f)
+    val sleep = ((sleepScore ?: (recovery * 100f)) / 100f).coerceIn(0f, 1f)
+    val (tabPrimary, tabSecondary, tabTertiary) = tabColors(tab)
+
+    // The field reflects the body, not just the active tab. High recovery opens into
+    // sea-glass tones; stress introduces a restrained warm dusk; sleep pulls toward violet.
+    val c1Target = lerp(tabPrimary, lerp(AuroraViolet, ElectricCyan, recovery), 0.58f)
+    val c2Target = lerp(tabSecondary, lerp(DeepViolet, ArcticBlue, sleep), 0.52f)
+    val c3Target = lerp(tabTertiary, lerp(ArcticBlue, Rose, stressLevel), 0.46f)
+    val c1 by animateColorAsState(c1Target, tween(720), label = "ambient-c1")
+    val c2 by animateColorAsState(c2Target, tween(720), label = "ambient-c2")
+    val c3 by animateColorAsState(c3Target, tween(720), label = "ambient-c3")
+
     val infinite = rememberInfiniteTransition(label = "ambient")
     val driftX by infinite.animateFloat(
-        initialValue = -0.06f,
-        targetValue = 0.08f,
-        animationSpec = infiniteRepeatable(tween(15_000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        initialValue = -0.055f,
+        targetValue = 0.075f,
+        animationSpec = infiniteRepeatable(tween(16_000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "drift-x",
     )
     val driftY by infinite.animateFloat(
-        initialValue = -0.04f,
-        targetValue = 0.06f,
-        animationSpec = infiniteRepeatable(tween(12_500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        initialValue = -0.035f,
+        targetValue = 0.055f,
+        animationSpec = infiniteRepeatable(tween(13_500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "drift-y",
     )
     val glow by infinite.animateFloat(
-        initialValue = 0.82f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(tween(6_500), RepeatMode.Reverse),
+        initialValue = 0.88f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(tween(8_200), RepeatMode.Reverse),
         label = "glow",
     )
 
     Canvas(modifier = modifier) {
-        drawRect(if (dark) Void else Mist)
+        drawRect(
+            brush = Brush.verticalGradient(
+                if (dark) listOf(Void, NightBlue, Void)
+                else listOf(Mist, Ceramic, MistBlue.copy(alpha = 0.72f)),
+            ),
+        )
         val radius = maxOf(size.width, size.height)
-        val alpha = (0.13f + energy.coerceIn(0f, 1f) * 0.08f) * glow
+        val alpha = if (dark) {
+            (0.19f + recovery * 0.11f) * glow
+        } else {
+            (0.13f + recovery * 0.075f) * glow
+        }
 
-        val p1 = Offset(size.width * (0.85f + driftX), size.height * (0.10f + driftY))
+        val p1 = Offset(size.width * (0.88f + driftX), size.height * (0.08f + driftY))
         drawCircle(
             brush = Brush.radialGradient(
-                listOf(c1.copy(alpha = alpha), c1.copy(alpha = 0.03f), Color.Transparent),
+                listOf(c1.copy(alpha = alpha), c1.copy(alpha = alpha * 0.22f), Color.Transparent),
                 center = p1,
-                radius = radius * 0.52f,
+                radius = radius * 0.56f,
             ),
-            radius = radius * 0.52f,
+            radius = radius * 0.56f,
             center = p1,
         )
 
-        val p2 = Offset(size.width * (0.02f - driftX), size.height * (0.55f - driftY))
+        val p2 = Offset(size.width * (0.02f - driftX), size.height * (0.52f - driftY))
         drawCircle(
             brush = Brush.radialGradient(
-                listOf(c2.copy(alpha = alpha * 0.9f), Color.Transparent),
+                listOf(c2.copy(alpha = alpha * 0.88f), c2.copy(alpha = alpha * 0.10f), Color.Transparent),
                 center = p2,
-                radius = radius * 0.58f,
+                radius = radius * 0.62f,
             ),
-            radius = radius * 0.58f,
+            radius = radius * 0.62f,
             center = p2,
         )
 
-        val p3 = Offset(size.width * 0.72f, size.height * (0.92f + driftY))
+        val warmAlpha = (0.055f + stressLevel * 0.10f) * glow
+        val p3 = Offset(size.width * 0.74f, size.height * (0.88f + driftY))
         drawCircle(
             brush = Brush.radialGradient(
-                listOf(c3.copy(alpha = alpha * 0.72f), Color.Transparent),
+                listOf(c3.copy(alpha = warmAlpha), c3.copy(alpha = warmAlpha * 0.12f), Color.Transparent),
                 center = p3,
-                radius = radius * 0.42f,
+                radius = radius * 0.48f,
             ),
-            radius = radius * 0.42f,
+            radius = radius * 0.48f,
             center = p3,
         )
     }
@@ -167,17 +195,18 @@ fun GlassPanel(
     content: @Composable () -> Unit,
 ) {
     val dark = LocalJingYouDarkTheme.current
-    val top = if (dark) GlassDark.copy(alpha = 0.94f) else GlassLight.copy(alpha = 0.94f)
-    val bottom = if (dark) GlassDark.copy(alpha = 0.72f) else Color.White.copy(alpha = 0.62f)
-    val border = if (dark) GlassBorderDark else GlassBorderLight
-    val accentOverlay = accent?.copy(alpha = if (dark) 0.09f else 0.055f) ?: Color.Transparent
+    val top = if (dark) GlassDark.copy(alpha = 0.44f) else GlassLight.copy(alpha = 0.52f)
+    val bottom = if (dark) NightBlue.copy(alpha = 0.22f) else Ceramic.copy(alpha = 0.28f)
+    val borderStart = if (dark) GlassBorderDark.copy(alpha = 0.10f) else GlassBorderLight.copy(alpha = 0.38f)
+    val borderEnd = if (dark) Color.White.copy(alpha = 0.012f) else Graphite.copy(alpha = 0.022f)
+    val accentOverlay = accent?.copy(alpha = if (dark) 0.105f else 0.065f) ?: Color.Transparent
 
     Box(
         modifier = modifier
             .clip(shape)
             .background(Brush.verticalGradient(listOf(top, bottom)))
-            .background(Brush.linearGradient(listOf(accentOverlay, Color.Transparent)))
-            .border(1.dp, border, shape)
+            .background(Brush.linearGradient(listOf(accentOverlay, Color.Transparent, Color.Transparent)))
+            .border(1.dp, Brush.linearGradient(listOf(borderStart, borderEnd, borderStart.copy(alpha = 0.18f))), shape)
             .padding(padding),
     ) {
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
@@ -343,8 +372,21 @@ private fun DockItem(
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
-    val bg by animateColorAsState(if (selected) accent.copy(alpha = 0.92f) else Color.Transparent, tween(260), label = "dock-bg")
-    val fg by animateColorAsState(if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, tween(260), label = "dock-fg")
+    val bg by animateColorAsState(
+        if (selected) accent.copy(alpha = 0.14f) else Color.Transparent,
+        tween(300),
+        label = "dock-bg",
+    )
+    val iconColor by animateColorAsState(
+        if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+        tween(300),
+        label = "dock-icon",
+    )
+    val textColor by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+        tween(300),
+        label = "dock-text",
+    )
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(24.dp))
@@ -353,16 +395,21 @@ private fun DockItem(
                 if (!selected) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
-            .animateContentSize(spring(dampingRatio = 0.8f, stiffness = 520f))
-            .padding(horizontal = if (selected) 12.dp else 9.dp, vertical = 12.dp),
+            .animateContentSize(spring(dampingRatio = 0.82f, stiffness = 460f))
+            .padding(horizontal = if (selected) 12.dp else 9.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
-        Icon(icon, contentDescription = label, tint = fg, modifier = Modifier.size(21.dp))
+        Box(contentAlignment = Alignment.Center) {
+            if (selected) {
+                Box(Modifier.size(30.dp).clip(CircleShape).background(accent.copy(alpha = 0.08f)))
+            }
+            Icon(icon, contentDescription = label, tint = iconColor, modifier = Modifier.size(20.dp))
+        }
         AnimatedVisibility(selected) {
             Row {
                 Spacer(Modifier.width(7.dp))
-                Text(label, style = MaterialTheme.typography.labelLarge, color = fg, maxLines = 1)
+                Text(label, style = MaterialTheme.typography.labelLarge, color = textColor, maxLines = 1)
             }
         }
     }

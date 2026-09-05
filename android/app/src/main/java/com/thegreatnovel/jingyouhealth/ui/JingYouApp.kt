@@ -73,6 +73,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.core.text.BidiFormatter
 import com.thegreatnovel.jingyouhealth.model.ActivitySummary
 import com.thegreatnovel.jingyouhealth.model.AppLanguage
 import com.thegreatnovel.jingyouhealth.model.ChatMessage
@@ -166,7 +167,13 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
     val energy = ((state.dashboard?.readiness?.score ?: state.dashboard?.bodyBattery?.value ?: 70.0) / 100.0).toFloat()
 
     Box(Modifier.fillMaxSize()) {
-        DynamicAmbientBackdrop(tab = selected, modifier = Modifier.fillMaxSize(), energy = energy)
+        DynamicAmbientBackdrop(
+            tab = selected,
+            modifier = Modifier.fillMaxSize(),
+            energy = energy,
+            stress = state.dashboard?.daily?.avgStress?.toFloat(),
+            sleepScore = state.dashboard?.sleep?.score?.toFloat(),
+        )
         AnimatedContent(
             targetState = selected,
             transitionSpec = {
@@ -242,8 +249,9 @@ private fun TodayScreen(state: JingYouUiState, onRefresh: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item { TodayHeader(state.dashboard) }
-            item { HeroReadiness(state.dashboard) }
-            item { MetricGrid(state.dashboard) }
+            item { HealthStoryHero(state.dashboard) }
+            item { RecoveryContributors(state.dashboard) }
+            item { SecondarySignals(state.dashboard) }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(tr("最近运动"), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
@@ -288,69 +296,165 @@ private fun TodayHeader(dashboard: Dashboard?) {
         in 12..17 -> tr("下午好")
         else -> tr("晚上好")
     }
-    Column(Modifier.padding(top = 8.dp, end = 52.dp)) {
-        Text("$greeting，${dashboard?.user?.displayName.orEmpty()}", style = MaterialTheme.typography.headlineLarge)
-        Spacer(Modifier.height(4.dp))
-        Text(tr("今天的身体状态"), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column(Modifier.padding(top = 10.dp, end = 52.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        // Keep the greeting and the profile name on separate typographic lines. This is
+        // visually calmer and avoids mixed Arabic/Latin BiDi punctuation on supported RTL.
+        Text(greeting, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        dashboard?.user?.displayName?.takeIf { it.isNotBlank() }?.let {
+            Text(it, style = MaterialTheme.typography.headlineLarge)
+        }
     }
 }
 
 @Composable
-private fun HeroReadiness(dashboard: Dashboard?) {
-    val score = dashboard?.readiness?.score ?: dashboard?.sleep?.score ?: 0.0
-    val accent = semanticAccent(score)
-    GlassPanel(modifier = Modifier.fillMaxWidth(), shape = HeroShape, padding = PaddingValues(20.dp), accent = accent) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            MetricRing(
-                value = (score / 100.0).toFloat(),
-                label = tr("恢复准备度"),
-                display = if (score > 0) score.roundToInt().toString() else "—",
-                accent = accent,
-                size = 164.dp,
-            )
-            Spacer(Modifier.width(18.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                dashboard?.readiness?.level?.takeIf { it.isNotBlank() }?.let { StatusPill(it.replace('_', ' '), accent) }
-                MetricLine(tr("昨夜 HRV"), dashboard?.hrv?.lastNightAvg?.roundToInt()?.let { "$it ms" } ?: "—")
-                MetricLine(tr("睡眠"), dashboard?.sleep?.sleepSeconds?.let { "%.1f %s".format(it / 3600.0, tr("小时")) } ?: "—")
-                MetricLine(tr("身体电量"), dashboard?.bodyBattery?.value?.roundToInt()?.toString() ?: "—")
+private fun HealthStoryHero(dashboard: Dashboard?) {
+    val scoreValue = dashboard?.readiness?.score ?: dashboard?.sleep?.score
+    val score = scoreValue ?: 0.0
+    val accent = semanticAccent(scoreValue)
+    val (headline, guidance) = when {
+        score >= 85 -> tr("恢复状态很好") to tr("今天可以按计划训练，身体已经准备好了。")
+        score >= 70 -> tr("恢复状态不错") to tr("保持正常节奏，留意训练后的身体反馈。")
+        score >= 50 -> tr("恢复状态一般") to tr("今天更适合稍微降低训练强度。")
+        score > 0 -> tr("身体需要恢复") to tr("优先睡眠、补水和轻量活动，让身体缓一缓。")
+        else -> tr("正在了解你的状态") to tr("同步更多数据后，我会把今天最重要的信号放在这里。")
+    }
+    val progress = (score / 100.0).toFloat().coerceIn(0f, 1f)
+
+    GlassPanel(
+        modifier = Modifier.fillMaxWidth(),
+        shape = HeroShape,
+        padding = PaddingValues(horizontal = 22.dp, vertical = 24.dp),
+        accent = accent,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            dashboard?.readiness?.level?.takeIf { it.isNotBlank() }?.let {
+                StatusPill(it.replace('_', ' '), accent)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text(headline, style = MaterialTheme.typography.headlineMedium)
+                Text(
+                    guidance,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(verticalAlignment = Alignment.Bottom) {
+                Column(Modifier.weight(1f)) {
+                    Text(tr("恢复准备度"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(
+                            if (score > 0) score.roundToInt().toString() else "—",
+                            fontSize = 56.sp,
+                            lineHeight = 58.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = (-1.3).sp,
+                        )
+                        if (score > 0) {
+                            Text(
+                                " / 100",
+                                modifier = Modifier.padding(bottom = 7.dp),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                Text(
+                    tr("今天的身体状态"),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = accent,
+                    modifier = Modifier.padding(bottom = 9.dp),
+                )
+            }
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(5.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)),
+            ) {
+                if (progress > 0f) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(progress)
+                            .height(5.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(Brush.horizontalGradient(listOf(accent.copy(alpha = 0.58f), accent, ElectricCyan))),
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun MetricLine(label: String, value: String) {
+private fun RecoveryContributors(dashboard: Dashboard?) {
+    val hrv = dashboard?.hrv?.lastNightAvg?.roundToInt()?.let { "$it ms" } ?: "—"
+    val sleep = dashboard?.sleep?.sleepSeconds?.let { "%.1f %s".format(it / 3600.0, tr("小时")) } ?: "—"
+    val battery = dashboard?.bodyBattery?.value?.roundToInt()?.toString() ?: "—"
+    GlassPanel(
+        modifier = Modifier.fillMaxWidth(),
+        padding = PaddingValues(horizontal = 18.dp, vertical = 17.dp),
+        accent = AuroraViolet,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text(tr("影响恢复"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ContributorMetric(tr("昨夜 HRV"), hrv, AuroraViolet, Modifier.weight(1f))
+                ContributorMetric(tr("睡眠"), sleep, ArcticBlue, Modifier.weight(1f))
+                ContributorMetric(tr("身体电量"), battery, ElectricCyan, Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContributorMetric(label: String, value: String, accent: Color, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(Modifier.size(7.dp).clip(CircleShape).background(accent))
+        Text(bidiMetric(value), style = MaterialTheme.typography.titleLarge)
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun SecondarySignals(dashboard: Dashboard?) {
+    val restingHr = dashboard?.daily?.restingHr?.roundToInt()?.let { "$it bpm" } ?: "—"
+    val stress = dashboard?.daily?.avgStress?.roundToInt()?.toString() ?: "—"
+    val steps = dashboard?.daily?.steps?.let { "%,d".format(it) } ?: "—"
+    GlassPanel(
+        modifier = Modifier.fillMaxWidth(),
+        padding = PaddingValues(horizontal = 18.dp, vertical = 17.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
+            Text(tr("今日信号"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SignalRow(tr("静息心率"), restingHr, Rose)
+            SoftDivider()
+            SignalRow(tr("压力"), stress, Amber)
+            SoftDivider()
+            SignalRow(tr("步数"), steps, ElectricCyan)
+        }
+    }
+}
+
+@Composable
+private fun SignalRow(label: String, value: String, accent: Color) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(7.dp).clip(CircleShape).background(accent.copy(alpha = 0.88f)))
+        Spacer(Modifier.width(10.dp))
         Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-        Text(value, style = MaterialTheme.typography.titleMedium)
+        Text(bidiMetric(value), style = MaterialTheme.typography.titleMedium)
     }
 }
 
 @Composable
-private fun MetricGrid(dashboard: Dashboard?) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            SmallMetricCard(tr("昨夜 HRV"), dashboard?.hrv?.lastNightAvg?.roundToInt()?.let { "$it ms" } ?: "—", AuroraViolet, Modifier.weight(1f))
-            SmallMetricCard(tr("静息心率"), dashboard?.daily?.restingHr?.roundToInt()?.let { "$it bpm" } ?: "—", Rose, Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            SmallMetricCard(tr("压力"), dashboard?.daily?.avgStress?.roundToInt()?.toString() ?: "—", Amber, Modifier.weight(1f))
-            SmallMetricCard(tr("步数"), dashboard?.daily?.steps?.let { "%,d".format(it) } ?: "—", ElectricCyan, Modifier.weight(1f))
-        }
-    }
+private fun SoftDivider() {
+    Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.055f)))
 }
 
 @Composable
-private fun SmallMetricCard(label: String, value: String, accent: Color, modifier: Modifier = Modifier) {
-    PressableGlassPanel(onClick = {}, modifier = modifier, accent = accent, padding = PaddingValues(16.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.size(8.dp).clip(CircleShape).background(accent))
-            Text(value, style = MaterialTheme.typography.headlineMedium)
-            Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
+private fun bidiMetric(value: String): String =
+    if (LocalAppLanguage.current.rtl) BidiFormatter.getInstance(true).unicodeWrap(value) else value
 
 @Composable
 private fun TrendsScreen(state: JingYouUiState) {
@@ -370,28 +474,50 @@ private fun TrendsScreen(state: JingYouUiState) {
                 Text(tr("过去 30 天"), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        item { TrendCard(tr("HRV 趋势"), state.trends.hrv, "ms", AuroraViolet) }
-        item { TrendCard(tr("静息心率趋势"), state.trends.restingHr, "bpm", Rose) }
-        item { TrendCard(tr("睡眠时长"), state.trends.sleepHours, tr("小时"), ArcticBlue) }
-        item { TrendCard(tr("压力趋势"), state.trends.stress, "", Amber) }
+        item { TrendCollection(state) }
     }
 }
 
 @Composable
-private fun TrendCard(title: String, points: List<TrendPoint>, unit: String, accent: Color) {
-    GlassPanel(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(18.dp), accent = accent) {
-        Column {
-            Row(verticalAlignment = Alignment.Bottom) {
-                Column(Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.titleLarge)
-                    Text(points.lastOrNull()?.date.orEmpty(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                val latest = points.lastOrNull { it.value != null }?.value
-                Text(if (latest != null) "%.1f %s".format(latest, unit) else "—", style = MaterialTheme.typography.headlineMedium, color = accent)
-            }
-            Spacer(Modifier.height(16.dp))
-            Sparkline(values = points.map { it.value }, modifier = Modifier.fillMaxWidth().height(105.dp), accent = accent)
+private fun TrendCollection(state: JingYouUiState) {
+    GlassPanel(
+        modifier = Modifier.fillMaxWidth(),
+        padding = PaddingValues(horizontal = 18.dp, vertical = 20.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            TrendSection(tr("HRV 趋势"), state.trends.hrv, "ms", AuroraViolet)
+            SoftDivider()
+            TrendSection(tr("静息心率趋势"), state.trends.restingHr, "bpm", Rose)
+            SoftDivider()
+            TrendSection(tr("睡眠时长"), state.trends.sleepHours, tr("小时"), ArcticBlue)
+            SoftDivider()
+            TrendSection(tr("压力趋势"), state.trends.stress, "", Amber)
         }
+    }
+}
+
+@Composable
+private fun TrendSection(title: String, points: List<TrendPoint>, unit: String, accent: Color) {
+    Column {
+        Row(verticalAlignment = Alignment.Bottom) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.size(7.dp).clip(CircleShape).background(accent.copy(alpha = 0.9f)))
+                    Text(title, style = MaterialTheme.typography.titleMedium)
+                }
+                Spacer(Modifier.height(3.dp))
+                Text(points.lastOrNull()?.date.orEmpty(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            val latest = points.lastOrNull { it.value != null }?.value
+            val display = if (latest != null) {
+                if (unit.isBlank()) "%.1f".format(latest) else "%.1f %s".format(latest, unit)
+            } else {
+                "—"
+            }
+            Text(bidiMetric(display), style = MaterialTheme.typography.headlineMedium, color = accent)
+        }
+        Spacer(Modifier.height(12.dp))
+        Sparkline(values = points.map { it.value }, modifier = Modifier.fillMaxWidth().height(82.dp), accent = accent)
     }
 }
 
@@ -419,27 +545,48 @@ private fun ActivitiesScreen(state: JingYouUiState) {
 
 @Composable
 private fun ActivityCard(activity: ActivitySummary) {
-    PressableGlassPanel(onClick = {}, modifier = Modifier.fillMaxWidth(), accent = ElectricCyan) {
+    PressableGlassPanel(
+        onClick = {},
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        padding = PaddingValues(horizontal = 16.dp, vertical = 15.dp),
+        accent = null,
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
-                Modifier.size(48.dp).clip(RoundedCornerShape(17.dp)).background(ElectricCyan.copy(alpha = 0.13f)),
+                Modifier.size(42.dp).clip(RoundedCornerShape(15.dp)).background(ElectricCyan.copy(alpha = 0.09f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(activity.type.take(1).uppercase(), fontWeight = FontWeight.Bold, color = ElectricCyan)
+                Text(activity.type.take(1).uppercase(), fontWeight = FontWeight.Bold, color = ElectricCyan.copy(alpha = 0.9f))
             }
             Spacer(Modifier.width(13.dp))
             Column(Modifier.weight(1f)) {
                 Text(activity.name.ifBlank { activity.type }, style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(3.dp))
-                Text(activity.startTime?.take(16)?.replace('T', ' ').orEmpty(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    activity.distanceM?.let { Text("%.1f %s".format(it / 1000.0, tr("公里")), style = MaterialTheme.typography.labelLarge) }
-                    activity.durationS?.let { Text("${(it / 60.0).roundToInt()} ${tr("分钟")}", style = MaterialTheme.typography.labelLarge) }
-                    activity.avgHr?.let { Text("${it.roundToInt()} bpm", style = MaterialTheme.typography.labelLarge) }
+                Text(
+                    bidiMetric(activity.startTime?.take(16)?.replace('T', ' ').orEmpty()),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(7.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(13.dp)) {
+                    activity.distanceM?.let {
+                        Text(bidiMetric("%.1f %s".format(it / 1000.0, tr("公里"))), style = MaterialTheme.typography.labelLarge)
+                    }
+                    activity.durationS?.let {
+                        Text(bidiMetric("${(it / 60.0).roundToInt()} ${tr("分钟")}"), style = MaterialTheme.typography.labelLarge)
+                    }
+                    activity.avgHr?.let {
+                        Text(bidiMetric("${it.roundToInt()} bpm"), style = MaterialTheme.typography.labelLarge)
+                    }
                 }
             }
-            Icon(Icons.Rounded.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f))
+            Icon(
+                Icons.Rounded.ArrowForward,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
+                modifier = Modifier.size(19.dp),
+            )
         }
     }
 }
