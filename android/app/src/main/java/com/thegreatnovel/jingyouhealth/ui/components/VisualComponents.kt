@@ -85,9 +85,9 @@ val CompactShape = RoundedCornerShape(20.dp)
 
 private fun tabColors(tab: RootTab): Triple<Color, Color, Color> = when (tab) {
     RootTab.TODAY -> Triple(ArcticBlue, ElectricCyan, AuroraViolet)
-    RootTab.TRENDS -> Triple(AuroraViolet, ArcticBlue, Color(0xFFB16CFF))
+    RootTab.TRENDS -> Triple(AuroraViolet, ArcticBlue, Color(0xFFB8A0D8))
     RootTab.ACTIVITIES -> Triple(ElectricCyan, Color(0xFF3A9CFF), Amber)
-    RootTab.COACH -> Triple(Color(0xFF9B76FF), Color(0xFF566FFF), ElectricCyan)
+    RootTab.COACH -> Triple(Color(0xFFA58AD4), Color(0xFF7E92D8), ElectricCyan)
 }
 
 @Composable
@@ -136,15 +136,22 @@ fun DynamicAmbientBackdrop(
     Canvas(modifier = modifier) {
         drawRect(
             brush = Brush.verticalGradient(
-                if (dark) listOf(Void, NightBlue, Void)
-                else listOf(Mist, Ceramic, MistBlue.copy(alpha = 0.72f)),
+                if (dark) {
+                    listOf(Void, Color(0xFF111728), NightBlue, Void)
+                } else {
+                    listOf(
+                        Color(0xFFEFF3FA),
+                        Color(0xFFF5F2FA),
+                        Color(0xFFEAF3F4),
+                    )
+                },
             ),
         )
         val radius = maxOf(size.width, size.height)
         val alpha = if (dark) {
             (0.19f + recovery * 0.11f) * glow
         } else {
-            (0.13f + recovery * 0.075f) * glow
+            (0.18f + recovery * 0.10f) * glow
         }
 
         val p1 = Offset(size.width * (0.88f + driftX), size.height * (0.08f + driftY))
@@ -332,22 +339,48 @@ fun FloatingHealthDock(
     onSelect: (RootTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val dark = LocalJingYouDarkTheme.current
     val items = listOf(
         Triple(RootTab.TODAY, Icons.Rounded.Home, tr("今日")),
         Triple(RootTab.COACH, Icons.Rounded.Forum, tr("教练")),
         Triple(RootTab.TRENDS, Icons.Rounded.Insights, tr("趋势")),
     )
-    GlassPanel(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(31.dp),
-        padding = PaddingValues(6.dp),
-        accent = tabColors(selected).first,
+    val shell = if (dark) {
+        Brush.horizontalGradient(
+            listOf(
+                NightBlue.copy(alpha = 0.94f),
+                DeepViolet.copy(alpha = 0.30f),
+                NightBlue.copy(alpha = 0.94f),
+            ),
+        )
+    } else {
+        Brush.horizontalGradient(
+            listOf(
+                Color(0xFFF3F4F8).copy(alpha = 0.94f),
+                Color(0xFFEDEAF6).copy(alpha = 0.95f),
+                Color(0xFFF3F4F8).copy(alpha = 0.94f),
+            ),
+        )
+    }
+    Box(
+        modifier = modifier
+            .fillMaxWidth(0.70f)
+            .graphicsLayer {
+                shadowElevation = 6.dp.toPx()
+                shape = RoundedCornerShape(25.dp)
+                clip = false
+            }
+            .clip(RoundedCornerShape(25.dp))
+            .background(shell)
+            .border(
+                1.dp,
+                if (dark) Color.White.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.68f),
+                RoundedCornerShape(25.dp),
+            )
+            .padding(3.dp),
     ) {
         Row(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(25.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = if (LocalJingYouDarkTheme.current) 0.92f else 0.98f)),
+            Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
             items.forEach { (tab, icon, label) ->
@@ -374,32 +407,67 @@ private fun DockItem(
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
-    val bg by animateColorAsState(
-        if (selected) accent.copy(alpha = 0.14f) else Color.Transparent,
-        tween(300),
-        label = "dock-bg",
-    )
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
     val iconColor by animateColorAsState(
         if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
-        tween(300),
+        tween(220),
         label = "dock-icon",
+    )
+    val scale by animateFloatAsState(
+        targetValue = when {
+            pressed -> 0.96f
+            selected -> 1.035f
+            else -> 1f
+        },
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = 620f),
+        label = "dock-scale",
+    )
+    val lift by animateFloatAsState(
+        targetValue = if (selected) -0.7f else 0f,
+        animationSpec = spring(dampingRatio = 0.78f, stiffness = 560f),
+        label = "dock-lift",
+    )
+    val halo by animateFloatAsState(
+        targetValue = if (selected) 1f else 0f,
+        animationSpec = tween(240, easing = FastOutSlowInEasing),
+        label = "dock-halo",
     )
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(24.dp))
-            .background(bg)
-            .clickable {
+            .clickable(interactionSource = interaction, indication = null) {
                 if (!selected) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
-            .padding(vertical = 8.dp),
+            .padding(vertical = 2.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            if (selected) {
-                Box(Modifier.size(48.dp).clip(CircleShape).background(accent.copy(alpha = 0.11f)))
-            }
-            Icon(icon, contentDescription = label, tint = iconColor, modifier = Modifier.size(27.dp))
+        Box(
+            modifier = Modifier
+                .width(56.dp)
+                .height(36.dp)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationY = lift.dp.toPx()
+                }
+                .clip(RoundedCornerShape(17.dp))
+                .background(
+                    if (selected) {
+                        Brush.horizontalGradient(
+                            listOf(
+                                AuroraViolet.copy(alpha = 0.18f + 0.07f * halo),
+                                ArcticBlue.copy(alpha = 0.13f + 0.06f * halo),
+                            ),
+                        )
+                    } else {
+                        Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = label, tint = iconColor, modifier = Modifier.size(23.dp))
         }
     }
 }

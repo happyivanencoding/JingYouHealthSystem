@@ -10,6 +10,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -95,6 +96,7 @@ import com.thegreatnovel.jingyouhealth.ui.theme.Amber
 import com.thegreatnovel.jingyouhealth.ui.theme.ArcticBlue
 import com.thegreatnovel.jingyouhealth.ui.theme.AuroraViolet
 import com.thegreatnovel.jingyouhealth.ui.theme.ElectricCyan
+import com.thegreatnovel.jingyouhealth.ui.theme.LocalJingYouDarkTheme
 import com.thegreatnovel.jingyouhealth.ui.theme.Rose
 import kotlin.math.roundToInt
 
@@ -308,6 +310,7 @@ private fun TodayHeader(dashboard: Dashboard?) {
 
 @Composable
 private fun HealthStoryHero(dashboard: Dashboard?) {
+    val dark = LocalJingYouDarkTheme.current
     val scoreValue = dashboard?.readiness?.score ?: dashboard?.sleep?.score
     val score = scoreValue ?: 0.0
     val accent = semanticAccent(scoreValue)
@@ -319,13 +322,79 @@ private fun HealthStoryHero(dashboard: Dashboard?) {
         else -> tr("正在了解你的状态") to tr("同步更多数据后，我会把今天最重要的信号放在这里。")
     }
     val progress = (score / 100.0).toFloat().coerceIn(0f, 1f)
+    val heroGradient = if (dark) {
+        Brush.linearGradient(
+            listOf(
+                Color(0xFF171E33),
+                Color(0xFF17302F),
+                Color(0xFF261C39),
+            ),
+        )
+    } else {
+        Brush.linearGradient(
+            listOf(
+                Color(0xFFE9EEFF),
+                Color(0xFFE4F3EF),
+                Color(0xFFF1EAF8),
+            ),
+        )
+    }
 
-    GlassPanel(
-        modifier = Modifier.fillMaxWidth(),
-        shape = HeroShape,
-        padding = PaddingValues(horizontal = 22.dp, vertical = 24.dp),
-        accent = accent,
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(HeroShape)
+            .background(heroGradient)
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(
+                        accent.copy(alpha = if (dark) 0.28f else 0.24f),
+                        Color.Transparent,
+                    ),
+                    radius = 640f,
+                ),
+            )
+            .border(
+                1.dp,
+                Brush.linearGradient(
+                    listOf(
+                        Color.White.copy(alpha = if (dark) 0.13f else 0.80f),
+                        accent.copy(alpha = 0.10f),
+                        Color.White.copy(alpha = if (dark) 0.04f else 0.30f),
+                    ),
+                ),
+                HeroShape,
+            )
+            .padding(horizontal = 22.dp, vertical = 24.dp),
     ) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .size(160.dp)
+                .clip(CircleShape)
+                .background(
+                    Brush.radialGradient(
+                        listOf(
+                            ElectricCyan.copy(alpha = if (dark) 0.13f else 0.20f),
+                            Color.Transparent,
+                        ),
+                    ),
+                ),
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .size(132.dp)
+                .clip(CircleShape)
+                .background(
+                    Brush.radialGradient(
+                        listOf(
+                            AuroraViolet.copy(alpha = if (dark) 0.13f else 0.17f),
+                            Color.Transparent,
+                        ),
+                    ),
+                ),
+        )
         Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
             dashboard?.readiness?.level?.takeIf { it.isNotBlank() }?.let {
                 StatusPill(it.replace('_', ' '), accent)
@@ -344,10 +413,10 @@ private fun HealthStoryHero(dashboard: Dashboard?) {
                     Row(verticalAlignment = Alignment.Bottom) {
                         Text(
                             if (score > 0) score.roundToInt().toString() else "—",
-                            fontSize = 56.sp,
-                            lineHeight = 58.sp,
+                            fontSize = 58.sp,
+                            lineHeight = 60.sp,
                             fontWeight = FontWeight.SemiBold,
-                            letterSpacing = (-1.3).sp,
+                            letterSpacing = (-1.4).sp,
                         )
                         if (score > 0) {
                             Text(
@@ -369,7 +438,7 @@ private fun HealthStoryHero(dashboard: Dashboard?) {
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(5.dp)
+                    .height(6.dp)
                     .clip(RoundedCornerShape(999.dp))
                     .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)),
             ) {
@@ -377,9 +446,17 @@ private fun HealthStoryHero(dashboard: Dashboard?) {
                     Box(
                         Modifier
                             .fillMaxWidth(progress)
-                            .height(5.dp)
+                            .height(6.dp)
                             .clip(RoundedCornerShape(999.dp))
-                            .background(Brush.horizontalGradient(listOf(accent.copy(alpha = 0.58f), accent, ElectricCyan))),
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(
+                                        AuroraViolet.copy(alpha = 0.78f),
+                                        accent,
+                                        ElectricCyan,
+                                    ),
+                                ),
+                            ),
                     )
                 }
             }
@@ -617,39 +694,87 @@ private fun CoachScreen(state: JingYouUiState, viewModel: JingYouViewModel) {
             GlassIcon(Icons.Rounded.Add, tr("开始新的对话"), viewModel::newThread)
         }
         Spacer(Modifier.height(12.dp))
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(9.dp),
-        ) {
-            if (state.messages.isEmpty()) {
-                item {
-                    GlassPanel(modifier = Modifier.fillMaxWidth(), accent = AuroraViolet) {
-                        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                            Text(tr("问问你的身体"), style = MaterialTheme.typography.titleLarge)
-                            Text(tr("比如：我今天适合跑 10km 吗？"), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+        if (state.messages.isEmpty() && !state.coachThinking) {
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 18.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(86.dp)
+                            .clip(RoundedCornerShape(30.dp))
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(
+                                        AuroraViolet.copy(alpha = 0.88f),
+                                        ArcticBlue.copy(alpha = 0.82f),
+                                        ElectricCyan.copy(alpha = 0.78f),
+                                    ),
+                                ),
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            Modifier
+                                .size(64.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.10f)),
+                        )
+                        Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = Color.White, modifier = Modifier.size(34.dp))
                     }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(tr("问问你的身体"), style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
+                        Text(
+                            tr("比如：我今天适合跑 10km 吗？"),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                    ChatComposer(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        onSend = {
+                            val text = draft.trim()
+                            if (text.isNotBlank()) {
+                                draft = ""
+                                viewModel.sendMessage(text)
+                            }
+                        },
+                        enabled = true,
+                    )
                 }
             }
-            items(state.messages, key = { it.id }) { ChatBubble(it) }
-            if (state.coachThinking) {
-                item { TypingBubble(tr(statuses[state.coachStatusIndex.coerceIn(statuses.indices)])) }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                items(state.messages, key = { it.id }) { ChatBubble(it) }
+                if (state.coachThinking) {
+                    item { TypingBubble(tr(statuses[state.coachStatusIndex.coerceIn(statuses.indices)])) }
+                }
             }
+            ChatComposer(
+                value = draft,
+                onValueChange = { draft = it },
+                onSend = {
+                    val text = draft.trim()
+                    if (text.isNotBlank()) {
+                        draft = ""
+                        viewModel.sendMessage(text)
+                    }
+                },
+                enabled = !state.coachThinking,
+            )
         }
-        ChatComposer(
-            value = draft,
-            onValueChange = { draft = it },
-            onSend = {
-                val text = draft.trim()
-                if (text.isNotBlank()) {
-                    draft = ""
-                    viewModel.sendMessage(text)
-                }
-            },
-            enabled = !state.coachThinking,
-        )
     }
 }
 
