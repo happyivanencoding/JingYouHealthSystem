@@ -16,7 +16,7 @@ USB Android development uses:
 adb reverse tcp:8788 tcp:8788
 ```
 
-Production target is `health.thegreatnovel.com` through Cloudflare Access/Tunnel. The hostname/Access application is not yet provisioned in Cloudflare.
+Production API is `https://health.thegreatnovel.com` through the existing remote-managed Cloudflare Tunnel. The hostname is provisioned and protected by a dedicated Cloudflare Access self-hosted application; unauthenticated requests are redirected to Cloudflare Access before they can reach FastAPI.
 
 ## Authentication model
 
@@ -59,7 +59,7 @@ Cloudflare Access supplies `Cf-Access-Jwt-Assertion`. Backend validates the Acce
 jingyouhealth://auth?token=<jingyou-session>
 ```
 
-Cloudflare team domain/audience still need production configuration.
+The Cloudflare Access auth domain and this application's audience are configured as Windows user environment variables (`JINGYOU_CF_TEAM_DOMAIN`, `JINGYOU_CF_AUD`). The Access application has a single Allow policy containing the two private JingYou account emails; the backend then maps the verified email claim to exactly one `UserContext` and issues its own JingYou session.
 
 ## Common authorization
 
@@ -206,10 +206,14 @@ Completed:
 - Backend regression tests for distinct sessions, Cloudflare identity mapping, physical health/chat DB isolation, and per-user ACP context.
 - SQLite request connections are explicitly closed; FastAPI no longer leaves `health.db` / `app.db` handles open after requests.
 - Latest-state queries skip empty Garmin placeholder rows so Coach does not incorrectly report synchronized metrics as missing.
+- `health.thegreatnovel.com` DNS and Tunnel ingress are provisioned on the existing `TGN` remote-managed tunnel and route to `127.0.0.1:8788`.
+- A dedicated Cloudflare Access application protects the Health hostname with one two-user email Allow policy; unauthenticated public requests are verified to redirect to Access.
+- Cloudflare Access JWT audience/team-domain runtime values are persisted in the Windows user environment and loaded by the backend startup script.
+- FastAPI is launched by the `JingYouHealthBackend` Windows scheduled task at user logon using `server/run-backend.ps1`; the task restarts on failure and ignores duplicate instances.
 
 Remaining backend work:
 
-- Provision `health.thegreatnovel.com` ingress on the existing remote-managed Cloudflare Tunnel.
-- Configure Cloudflare Access application, JWT audience/team-domain values, and production email mapping flow.
-- Run the FastAPI server as a persistent Windows service/startup process rather than the current development uvicorn session.
+- Perform the first interactive production login from the Android/system-browser flow for each private account and verify the full `Cloudflare identity -> /api/mobile-auth/bridge -> JingYou session -> /api/me` round trip. This requires the human user's IdP/OTP interaction and cannot be completed by an unauthenticated backend probe.
+
+
 - Optionally add true streaming Coach events if the frontend wants backend-driven phase updates rather than local status animation.
