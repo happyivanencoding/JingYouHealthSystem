@@ -18,6 +18,11 @@ import com.thegreatnovel.jingyouhealth.model.RecoveryComponent
 import com.thegreatnovel.jingyouhealth.model.SleepClockPoint
 import com.thegreatnovel.jingyouhealth.model.CoachSleepSnapshot
 import com.thegreatnovel.jingyouhealth.model.CoachMemoryItem
+import com.thegreatnovel.jingyouhealth.model.TrainingStatus
+import com.thegreatnovel.jingyouhealth.model.TrainingWindow
+import com.thegreatnovel.jingyouhealth.model.TrainingReference
+import com.thegreatnovel.jingyouhealth.model.TrainingLoadPoint
+import com.thegreatnovel.jingyouhealth.model.TrainingLoadValues
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -42,7 +47,7 @@ class HealthApi(private val baseUrl: String = BuildConfig.API_BASE_URL) {
     }
 
     suspend fun trends(token: String, days: Int = 180): Trends = withContext(Dispatchers.IO) {
-        parseTrends(JSONObject(request("GET", "/api/trends?days=$days", token, null)))
+        parseTrends(JSONObject(request("GET", "/api/trends?days=$days&training_days=730", token, null)))
     }
 
     suspend fun activities(token: String): List<ActivitySummary> = withContext(Dispatchers.IO) {
@@ -131,6 +136,43 @@ class HealthApi(private val baseUrl: String = BuildConfig.API_BASE_URL) {
         Unit
     }
 
+    suspend fun setTrainingGoal(token: String, goal: String): TrainingStatus = withContext(Dispatchers.IO) {
+        val root = JSONObject(request("PUT", "/api/training/preferences", token, JSONObject().put("goal", goal).toString()))
+        parseTraining(root.getJSONObject("training"))
+    }
+
+    suspend fun setTrainingFeeling(token: String, date: String?, feeling: String?): TrainingStatus = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("feeling", feeling ?: JSONObject.NULL)
+        date?.let { body.put("date", it) }
+        val root = JSONObject(request("PUT", "/api/training/checkin", token, body.toString()))
+        parseTraining(root.getJSONObject("training"))
+    }
+
+    private fun parseTraining(root: JSONObject): TrainingStatus {
+        fun window(value: JSONObject?, days: Int) = TrainingWindow(
+            totalAu = value?.optNullableDouble("total_au"), activeDays = value?.optInt("active_days") ?: 0,
+            coverageDays = value?.optInt("coverage_days") ?: 0, windowDays = value?.optInt("window_days", days) ?: days)
+        val reference = root.optJSONObject("reference")
+        val chronicReference = root.optJSONObject("chronic_reference")
+        val reasons = root.optJSONArray("reasons") ?: JSONArray()
+        return TrainingStatus(
+            date = root.optStringOrNull("date"), methodologyVersion = root.optStringOrNull("methodology_version"),
+            goal = root.optString("goal", "balanced"), feeling = root.optStringOrNull("feeling"),
+            acute = window(root.optJSONObject("acute"), 7), chronic = window(root.optJSONObject("chronic"), 28),
+            reference = TrainingReference(reference?.optNullableDouble("total_au"), reference?.optInt("coverage_days") ?: 0,
+                reference?.optNullableDouble("weekly_equivalent_au"), reference?.optBoolean("scaled_for_coverage") ?: false),
+            chronicReference = TrainingReference(totalAu = chronicReference?.optNullableDouble("total_au"), coverageDays = chronicReference?.optInt("coverage_days") ?: 0,
+                scaledForCoverage = chronicReference?.optBoolean("scaled_for_coverage") ?: false, equivalentAu = chronicReference?.optNullableDouble("equivalent_au")),
+            chronicRelativeRatio = root.optNullableDouble("chronic_relative_ratio"), chronicTrend = root.optString("chronic_trend", "insufficient"),
+            relativeRatio = root.optNullableDouble("relative_ratio"), loadTrend = root.optString("load_trend", "insufficient"),
+            confidence = root.optString("confidence", "insufficient"), mode = root.optString("mode", "insufficient"),
+            focus = root.optString("focus", "easy_aerobic"), intensity = root.optString("intensity", "conservative"),
+            reasons = List(reasons.length()) { reasons.optString(it) }, estimatedRatio = root.optNullableDouble("estimated_ratio"),
+            reportedRatio = root.optNullableDouble("reported_ratio"), hardDays3 = root.optInt("hard_days3"),
+            strengthDays7 = root.optNullableInt("strength_days_7"), aerobicDays7 = root.optNullableInt("aerobic_days_7"),
+        )
+    }
+
     private fun parseMessage(item: JSONObject): ChatMessage = ChatMessage(
         id = item.getString("id"),
         role = item.optString("role"),
@@ -168,6 +210,7 @@ class HealthApi(private val baseUrl: String = BuildConfig.API_BASE_URL) {
         val battery = root.optJSONObject("body_battery")
         val freshness = root.optJSONObject("freshness")
         return Dashboard(
+            training = root.optJSONObject("training")?.let(::parseTraining),
             user = UserSummary(userObj?.optString("display_name").orEmpty(), userObj?.optString("role").orEmpty()),
             date = root.optStringOrNull("date"),
             daily = daily?.let {
@@ -246,6 +289,7 @@ class HealthApi(private val baseUrl: String = BuildConfig.API_BASE_URL) {
         val daily = root.optJSONArray("daily") ?: JSONArray()
         val sleep = root.optJSONArray("sleep") ?: JSONArray()
         return Trends(
+            trainingHistory = parseTrainingHistory(root.optJSONObject("training_load")?.optJSONArray("points")),
             hrv = points(hrv, "last_night_avg") { it?.toFloat() },
             restingHr = points(daily, "resting_hr") { it?.toFloat() },
             stress = points(daily, "avg_stress") { it?.toFloat() },
@@ -272,6 +316,20 @@ class HealthApi(private val baseUrl: String = BuildConfig.API_BASE_URL) {
         for (i in 0 until array.length()) {
             val item = array.getJSONObject(i)
             add(TrendPoint(item.optString("date"), transform(item.optNullableDouble(key))))
+        }
+    }
+
+    private fun parseTrainingHistory(rows: JSONArray?): List<TrainingLoadPoint> {
+        if (rows == null) return emptyList()
+        fun values(row: JSONObject?) = TrainingLoadValues(
+            load7 = row?.optNullableDouble("load_7"), load28 = row?.optNullableDouble("load_28"),
+            referenceWeekly = row?.optNullableDouble("reference_weekly"), reference28 = row?.optNullableDouble("reference_28"),
+            recorded7 = row?.optNullableDouble("recorded_7"), recorded28 = row?.optNullableDouble("recorded_28"))
+        return List(rows.length()) { index ->
+            val row = rows.getJSONObject(index)
+            val categories = row.optJSONObject("categories")
+            TrainingLoadPoint(date = row.optString("date"), coverage7 = row.optInt("coverage_7"), coverage28 = row.optInt("coverage_28"),
+                all = values(row.optJSONObject("all")), categories = if (categories == null) emptyMap() else categories.keys().asSequence().associateWith { key -> values(categories.optJSONObject(key)) })
         }
     }
 

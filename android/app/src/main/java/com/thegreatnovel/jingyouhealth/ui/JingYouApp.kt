@@ -220,6 +220,7 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
     var pullFraction by remember { mutableFloatStateOf(0f) }
     var activityOpen by remember { mutableStateOf<ActivitySummary?>(null) }
     var activitiesOpen by rememberSaveable { mutableStateOf(false) }
+    var trainingMethodOpen by rememberSaveable { mutableStateOf(false) }
     val detailOpen = sleepOpen || metricOpen != null || activitiesOpen || labOpen
     val askCoach: (String) -> Unit = { question ->
         viewModel.prepareCoachQuestion(question)
@@ -230,6 +231,7 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
         selected = RootTab.COACH
     }
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val trainingQuestion = tr("根据我的恢复、短长期负荷和当前训练目标，今天应如何安排？")
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val density = LocalDensity.current
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
@@ -260,11 +262,12 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
                     metricAnchor = if (metric == HealthMetric.HRV) state.dashboard?.hrv?.date else state.dashboard?.daily?.date
                     metricOpen = metric
                 }, { selected = RootTab.ACTIVITIES }, { activityOpen = it }, { pullFraction = it },
-                    { selected = RootTab.BODY }, { selected = RootTab.COACH }, { viewModel.setSettingsOpen(true) })
+                    { selected = RootTab.BODY }, { selected = RootTab.COACH }, { viewModel.setSettingsOpen(true) },
+                    { trainingMethodOpen = true }, { askCoach(trainingQuestion) })
                 RootTab.SLEEP -> SleepDetailScreen(state, { selected = RootTab.TODAY }, askCoach, onOpenLab = openLab,
                     onStageExplore = openStageLab, topLevel = true) { metric, date -> metricAnchor = date; metricOpen = metric }
                 RootTab.BODY, RootTab.TRENDS -> MetricExplorer(state, initial = HealthMetric.READINESS, onSleep = { selected = RootTab.SLEEP }, onAsk = askCoach, onOpenLab = openLab, bodyOverview = true)
-                RootTab.ACTIVITIES -> ActivityExperience(state) { activityOpen = it }
+                RootTab.ACTIVITIES -> ActivityExperience(state, onMethod = { trainingMethodOpen = true }) { activityOpen = it }
                 RootTab.COACH -> CoachScreen(state, viewModel)
             }
         }
@@ -343,13 +346,15 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
         val activity = state.activities.firstOrNull { it.id == original.id } ?: original
         ActivityDetailSheet(activity, state.savingActivityEffort, { rpe, category -> viewModel.saveActivityEffort(activity.id, rpe, category) }) { activityOpen = null }
     }
+    if (trainingMethodOpen) TrainingMethodSheet(state, viewModel::setTrainingGoal, viewModel::setTrainingFeeling) { trainingMethodOpen = false }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TodayScreen(state: JingYouUiState, onRefresh: () -> Unit, onSleep: () -> Unit,
                         onMetric: (HealthMetric) -> Unit, onActivities: () -> Unit, onActivity: (ActivitySummary) -> Unit,
-                        onPull: (Float) -> Unit, onBody: () -> Unit, onCoach: () -> Unit, onCustomize: () -> Unit) {
+                        onPull: (Float) -> Unit, onBody: () -> Unit, onCoach: () -> Unit, onCustomize: () -> Unit,
+                        onTrainingMethod: () -> Unit, onTrainingCoach: () -> Unit) {
     val pullState = remember { ElasticPullState() }
     val effectivePull = pullState.distanceFraction
     LaunchedEffect(pullState) { snapshotFlow { pullState.distanceFraction }.collect { onPull(it) } }
@@ -390,7 +395,7 @@ private fun TodayScreen(state: JingYouUiState, onRefresh: () -> Unit, onSleep: (
                 item(key = "module-${module.name}") {
                     Box(Modifier.animateItem()) {
                         when (module) {
-                            HomeModule.READINESS -> HealthStoryHero(state.dashboard, onBody)
+                            HomeModule.READINESS -> TrainingRhythmHero(state, onBody, onActivities, onTrainingMethod, onTrainingCoach)
                             HomeModule.SLEEP -> SleepEntry(state, onSleep)
                             HomeModule.RECOVERY_SIGNALS -> RecoverySignalsPanel(state, onSleep, onMetric)
                             HomeModule.DAILY_SIGNALS -> DailySignalsPanel(state, onMetric)

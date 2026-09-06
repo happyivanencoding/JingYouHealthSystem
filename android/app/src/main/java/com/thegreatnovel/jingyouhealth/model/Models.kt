@@ -112,6 +112,7 @@ data class Dashboard(
     val bodyBattery: BodyBatterySummary? = null,
     val recentActivities: List<ActivitySummary> = emptyList(),
     val freshness: MetricFreshness? = null,
+    val training: TrainingStatus? = null,
 )
 
 data class TrendPoint(
@@ -135,6 +136,7 @@ data class Trends(
     val lightHours: List<TrendPoint> = emptyList(),
     val sleepClocks: List<SleepClockPoint> = emptyList(),
     val readiness: List<TrendPoint> = emptyList(),
+    val trainingHistory: List<TrainingLoadPoint> = emptyList(),
 )
 
 data class ChatThread(

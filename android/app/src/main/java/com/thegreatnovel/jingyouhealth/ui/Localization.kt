@@ -102,7 +102,7 @@ val LocalAppLanguage = staticCompositionLocalOf { AppLanguage.CHINESE }
 
 fun translate(language: AppLanguage, sourceChinese: String): String {
     if (language == AppLanguage.CHINESE) return sourceChinese
-    val item = translations[sourceChinese] ?: return translateInsight(language, sourceChinese) ?: translateSleepLab(language, sourceChinese) ?: translateActivity(language, sourceChinese) ?: translateCore(language, sourceChinese) ?: sourceChinese
+    val item = translations[sourceChinese] ?: return translateInsight(language, sourceChinese) ?: translateSleepLab(language, sourceChinese) ?: translateActivity(language, sourceChinese) ?: translateCore(language, sourceChinese) ?: translateRhythm(language, sourceChinese) ?: translateActivityCalendar(language, sourceChinese) ?: translateRollingLoad(language, sourceChinese) ?: sourceChinese
     return when (language) {
         AppLanguage.CHINESE -> sourceChinese
         AppLanguage.ENGLISH -> item.en

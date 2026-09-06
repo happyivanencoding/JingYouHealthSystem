@@ -10,7 +10,7 @@ import subprocess
 import sys
 import uuid
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import date as Date, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -43,7 +43,15 @@ from coach_memory import (  # noqa: E402
     list_memory_items,
     memory_context,
 )
-from health_queries import activity_by_id, activities, agent_context, dashboard, trends  # noqa: E402
+from health_queries import (  # noqa: E402
+    _ensure_training_tables,
+    activity_by_id,
+    activities,
+    agent_context,
+    dashboard,
+    training as training_status,
+    trends,
+)
 
 app = FastAPI(title="JingYou Health API", version="0.1.0")
 PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
@@ -71,6 +79,15 @@ class ActivityEffortUpdate(BaseModel):
         # special in IEEE-754 and must never reach SQLite or load calculations.
         if self.rpe is not None and not math.isfinite(self.rpe):
             raise ValueError("rpe must be finite")
+
+
+class TrainingPreferenceUpdate(BaseModel):
+    goal: Literal["balanced", "endurance", "strength"]
+
+
+class TrainingCheckinUpdate(BaseModel):
+    date: Date | None = None
+    feeling: Literal["fresh", "normal", "tired"] | None = None
 
 
 def _bearer(authorization: str | None) -> str | None:
@@ -165,9 +182,10 @@ def get_dashboard(user: UserContext = Depends(current_user)) -> dict[str, object
 @app.get("/api/trends")
 def get_trends(
     days: int = Query(default=30, ge=7, le=180),
+    training_days: int | None = Query(default=None, ge=28, le=730),
     user: UserContext = Depends(current_user),
 ) -> dict[str, object]:
-    return trends(user, days=days)
+    return trends(user, days=days, training_days=training_days)
 
 
 @app.get("/api/activities")
@@ -218,7 +236,7 @@ def put_activity_effort(
 
 @app.post("/api/refresh")
 def refresh(user: UserContext = Depends(current_user)) -> dict[str, object]:
-    end = date.today()
+    end = Date.today()
     start = end - timedelta(days=2)
     result = subprocess.run(
         [
@@ -242,6 +260,48 @@ def refresh(user: UserContext = Depends(current_user)) -> dict[str, object]:
     if result.returncode != 0:
         raise HTTPException(status_code=502, detail=(result.stderr or result.stdout)[-1200:])
     return {"ok": True, "dashboard": dashboard(user)}
+
+
+@app.get("/api/training")
+def get_training(
+    goal: Literal["balanced", "endurance", "strength"] | None = Query(default=None),
+    user: UserContext = Depends(current_user),
+) -> dict[str, object | None]:
+    return {"training": training_status(user, goal=goal)}
+
+
+@app.put("/api/training/preferences")
+def put_training_preferences(
+    body: TrainingPreferenceUpdate,
+    user: UserContext = Depends(current_user),
+) -> dict[str, object | None]:
+    with _thread_rows(user) as con:
+        _ensure_training_tables(con)
+        con.execute(
+            """INSERT INTO training_preferences(id,goal,updated_at) VALUES(1,?,?)
+               ON CONFLICT(id) DO UPDATE SET goal=excluded.goal,updated_at=excluded.updated_at""",
+            (body.goal, utc_now()),
+        )
+    return {"training": training_status(user, goal=body.goal)}
+
+
+@app.put("/api/training/checkin")
+def put_training_checkin(
+    body: TrainingCheckinUpdate,
+    user: UserContext = Depends(current_user),
+) -> dict[str, object | None]:
+    current = training_status(user)
+    target = body.date.isoformat() if body.date else (str(current["date"]) if current and current.get("date") else None)
+    if target is None:
+        raise HTTPException(status_code=409, detail="No meaningful training date is available")
+    with _thread_rows(user) as con:
+        _ensure_training_tables(con)
+        con.execute(
+            """INSERT INTO training_checkins(date,feeling,updated_at) VALUES(?,?,?)
+               ON CONFLICT(date) DO UPDATE SET feeling=excluded.feeling,updated_at=excluded.updated_at""",
+            (target, body.feeling, utc_now()),
+        )
+    return {"training": training_status(user, target_date=target)}
 
 
 @app.get("/api/coach/memory")
@@ -506,6 +566,8 @@ def _generate_coach_answer(user: UserContext, thread_id: str) -> tuple[str, dict
             "For current/today questions, use the freshest meaningful measurement for each metric and respect its date/timestamp; if key metrics come from different dates, say so briefly.",
             "You may discuss recovery, sleep, training load, exercise planning, and health trends. Do not present medical diagnosis as fact.",
             "For training load, prefer each activity's internal_load AU and never add it to Garmin activity_training_load; effort_source=estimated is not a user-reported RPE.",
+            "When health.today.training is available, use its dated JingYou rhythm mode, focus and reasons as an initial planning aid. Rising or lighter means a change from personal recorded habits, not a diagnosis of overtraining or undertraining. Respect activity-sync coverage, estimated effort and missing recovery signals. Do not prescribe workouts to hit a workload ratio or call a ratio a safe zone; incorporate the user's current feelings, goals and constraints.",
+            "When health.today.training is present, use its JingYou Rhythm short/long load and direction as engineering context; do not diagnose overtraining or repeat the full load summary unless the question needs it.",
             "If context.sleep_analysis is present, use useful observations and exploratory clues in ordinary answers even when quality is unstable or insufficient; never silently present a historical analysis as last night's result. Weak or negative importance cannot establish a cause, direction, or intervention effect, and aggregate weights do not explain one night. Mention technical details only when the user asks or they directly answer the question.",
             "Read the quality of the specific outcome model being discussed. A useful deep-sleep model does not make the total-sleep or REM model reliable; mixed quality must not be generalized across outcomes.",
             "If context.coach_memory is present, use only its confirmed items and related history as durable context. Do not recreate a forgotten key from old history unless the current user explicitly states it again or asks to remember it. A model hypothesis is tentative until the user confirms it.",

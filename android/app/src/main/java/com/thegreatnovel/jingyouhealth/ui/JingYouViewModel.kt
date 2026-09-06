@@ -75,6 +75,7 @@ data class JingYouUiState(
     val coachMemories: List<CoachMemoryItem> = emptyList(),
     val loadingCoachMemory: Boolean = false,
     val forgettingMemoryKey: String? = null,
+    val savingTraining: Boolean = false,
 )
 
 class JingYouViewModel(application: Application) : AndroidViewModel(application) {
@@ -212,6 +213,26 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
     fun setCoachDraft(text: String) {
         if (text.isBlank() || coachDraftAnalysis?.let { !text.contains(it.throughDate) } == true) coachDraftAnalysis = null
         _state.update { it.copy(coachDraft = text) }
+    }
+
+    fun setTrainingGoal(goal: String) = updateTraining { token -> api.setTrainingGoal(token, goal) }
+
+    fun setTrainingFeeling(feeling: String?) {
+        val date = _state.value.dashboard?.training?.date
+        updateTraining { token -> api.setTrainingFeeling(token, date, feeling) }
+    }
+
+    private fun updateTraining(request: suspend (String) -> com.thegreatnovel.jingyouhealth.model.TrainingStatus) {
+        val token = _state.value.token ?: return
+        if (_state.value.savingTraining) return
+        val generation = sessionGeneration
+        _state.update { it.copy(savingTraining = true, error = null) }
+        viewModelScope.launch {
+            val result = requestResult { request(token) }
+            if (!isCurrentSession(token, generation)) return@launch
+            result.onSuccess { training -> _state.update { it.copy(dashboard = it.dashboard?.copy(training = training), savingTraining = false) } }
+                .onFailure { error -> _state.update { it.copy(savingTraining = false, error = readableError(error, Failure.LOAD)) } }
+        }
     }
 
     fun prepareCoachQuestion(text: String, analysis: CoachSleepSnapshot? = null) {

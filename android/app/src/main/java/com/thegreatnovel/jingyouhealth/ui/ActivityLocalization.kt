@@ -10,6 +10,12 @@ private data class ActivityTranslation(
 
 /** Activity-only strings kept separate so the root localization table stays small. */
 private val activityTranslations = mapOf(
+    "滚动四周" to ActivityTranslation("Scroll through four weeks", "Parcourir quatre semaines", "تصفّح أربعة أسابيع"),
+    "左右滑动查看" to ActivityTranslation("Swipe left or right to browse", "Balayez à gauche ou à droite pour parcourir", "اسحب يمينًا أو يسارًا للتصفح"),
+    "近四周累计" to ActivityTranslation("Last four weeks", "Total des quatre dernières semaines", "إجمالي الأسابيع الأربعة الأخيرة"),
+    "选择结束日期" to ActivityTranslation("Choose end date", "Choisir la date de fin", "اختر تاريخ النهاية"),
+    "结束日" to ActivityTranslation("End date", "Date de fin", "تاريخ النهاية"),
+    "历史不足四周" to ActivityTranslation("Less than four weeks of history", "Moins de quatre semaines d’historique", "السجل أقل من أربعة أسابيع"),
     "活动" to ActivityTranslation("Activities", "Activités", "الأنشطة"),
     "运动记录" to ActivityTranslation("Activity", "Activité", "النشاط"),
     "按周查看负荷" to ActivityTranslation("Review load by week", "Charge par semaine", "راجع الحمل أسبوعيًا"),
