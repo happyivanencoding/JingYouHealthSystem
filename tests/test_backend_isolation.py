@@ -142,6 +142,20 @@ class BackendIsolationTests(unittest.TestCase):
         self.assertNotEqual(owner["recent_activities"][0]["activity_id"], member["recent_activities"][0]["activity_id"])
         self.assertEqual(len(trends(self.owner, days=7)["daily"]), 1)
 
+    def test_pull_refresh_uses_live_refresh_phase(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="ok", stderr="")
+        with (
+            patch.object(app.subprocess, "run", return_value=completed) as run,
+            patch.object(app, "dashboard", return_value={"date": "2026-09-06"}),
+        ):
+            result = app.refresh(self.owner)
+
+        command = run.call_args.args[0]
+        self.assertEqual(result["ok"], True)
+        self.assertIn("--user-id", command)
+        self.assertEqual(command[command.index("--user-id") + 1], self.owner.user_id)
+        self.assertEqual(command[command.index("--phase") + 1], "refresh")
+
     def test_chat_threads_and_agent_context_are_physically_user_scoped(self) -> None:
         owner_thread = app.create_thread(app.ChatCreate(title="Owner thread"), self.owner)
         member_thread = app.create_thread(app.ChatCreate(title="Member thread"), self.member)

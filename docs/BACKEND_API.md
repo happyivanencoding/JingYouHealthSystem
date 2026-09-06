@@ -117,7 +117,7 @@ GET /api/activities?limit=80&offset=0
 POST /api/refresh
 ```
 
-Backend resolves the logged-in user, uses only that user's Garmin token, refreshes the most recent days into that user's `health.db`, then returns the updated dashboard.
+Backend resolves the logged-in user and uses only that user's Garmin token. A user-initiated pull refresh deliberately **re-queries the most recent 3 calendar days** instead of trusting the historical-sync checkpoint, because Garmin can create same-day placeholder records before the watch finishes syncing. It also checks the latest 20 activity summaries incrementally so newly synced activities appear without redownloading the user's entire activity history/FIT archive. The updated dashboard is returned after the sync completes.
 
 The Android client never stores or receives Garmin credentials/tokens.
 

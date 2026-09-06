@@ -168,7 +168,7 @@ def refresh(user: UserContext = Depends(current_user)) -> dict[str, object]:
             "--end",
             end.isoformat(),
             "--phase",
-            "daily",
+            "refresh",
         ],
         cwd=ROOT,
         capture_output=True,

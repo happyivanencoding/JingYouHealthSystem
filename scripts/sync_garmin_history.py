@@ -490,20 +490,17 @@ class Sync:
             [values[c] for c in cols],
         )
 
-    def sync_activities(self):
-        summaries: list[dict[str, Any]] = []
-        start = 0
-        while True:
-            page = self.client.get_activities(start, 100) or []
-            if not page:
-                break
-            summaries.extend(page)
-            start += len(page)
-            if len(page) < 100:
-                break
-        put_raw(self.con, "garmin", "activity_list_all", "all", summaries)
+    def _sync_activity_summaries(
+        self,
+        summaries: list[dict[str, Any]],
+        *,
+        list_kind: str,
+        list_key: str,
+        progress_label: str,
+    ):
+        put_raw(self.con, "garmin", list_kind, list_key, summaries)
         self.con.commit()
-        print(f"ACTIVITY_LIST {len(summaries)}", flush=True)
+        print(f"{progress_label}_LIST {len(summaries)}", flush=True)
 
         detail_calls = [
             ("activity", self.client.get_activity),
@@ -551,7 +548,34 @@ class Sync:
             )
             self.con.commit()
             if idx == 1 or idx % 10 == 0 or idx == total:
-                print(f"ACTIVITY {idx}/{total} id={key} calls={self.calls}", flush=True)
+                print(f"{progress_label} {idx}/{total} id={key} calls={self.calls}", flush=True)
+
+    def sync_activities(self):
+        summaries: list[dict[str, Any]] = []
+        start = 0
+        while True:
+            page = self.client.get_activities(start, 100) or []
+            if not page:
+                break
+            summaries.extend(page)
+            start += len(page)
+            if len(page) < 100:
+                break
+        self._sync_activity_summaries(
+            summaries,
+            list_kind="activity_list_all",
+            list_key="all",
+            progress_label="ACTIVITY",
+        )
+
+    def sync_recent_activities(self, limit: int = 20):
+        summaries = self.client.get_activities(0, limit) or []
+        self._sync_activity_summaries(
+            summaries,
+            list_kind="activity_list_recent",
+            list_key="latest",
+            progress_label="RECENT_ACTIVITY",
+        )
 
     def run(self, start: date, end: date, phase: str):
         run_id = self.con.execute(
@@ -560,12 +584,26 @@ class Sync:
         ).lastrowid
         self.con.commit()
         try:
-            if phase in {"all", "static"}:
-                self.sync_static(start, end)
-            if phase in {"all", "daily"}:
-                self.sync_daily(start, end)
-            if phase in {"all", "activities"}:
-                self.sync_activities()
+            if phase == "refresh":
+                previous_refresh = self.refresh
+                try:
+                    # A user-initiated pull-to-refresh must re-query recent Garmin
+                    # wellness records even if an earlier same-day placeholder was
+                    # already archived. Recent activities stay incremental so we do
+                    # not redownload old activity details/FIT files on every pull.
+                    self.refresh = True
+                    self.sync_daily(start, end)
+                    self.refresh = False
+                    self.sync_recent_activities()
+                finally:
+                    self.refresh = previous_refresh
+            else:
+                if phase in {"all", "static"}:
+                    self.sync_static(start, end)
+                if phase in {"all", "daily"}:
+                    self.sync_daily(start, end)
+                if phase in {"all", "activities"}:
+                    self.sync_activities()
             self.con.execute(
                 "UPDATE sync_runs SET finished_at=?,status='completed',records_written=? WHERE id=?",
                 (utc_now(), self.writes, run_id),
@@ -586,7 +624,7 @@ def main():
     parser.add_argument("--user-id")
     parser.add_argument("--start", default=DEFAULT_START.isoformat())
     parser.add_argument("--end", default=date.today().isoformat())
-    parser.add_argument("--phase", choices=("all", "static", "daily", "activities"), default="all")
+    parser.add_argument("--phase", choices=("all", "static", "daily", "activities", "refresh"), default="all")
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--delay", type=float, default=0.12)
     args = parser.parse_args()
