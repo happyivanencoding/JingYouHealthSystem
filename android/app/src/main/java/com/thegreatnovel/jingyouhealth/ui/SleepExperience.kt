@@ -221,7 +221,7 @@ private fun RecentNights(state: JingYouUiState, count: Int, compact: Boolean = f
     val caption = tr("最近 7 晚")
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-            NightHistoryChart(points, base?.median?.toFloat(), ArcticBlue, Modifier.fillMaxWidth().height(if (compact) 64.dp else 88.dp).semantics { contentDescription = caption }, date)
+            NightHistoryChart(points, base?.median?.toFloat(), ArcticBlue, Modifier.fillMaxWidth().height(if (compact) 112.dp else 152.dp).semantics { contentDescription = caption }, date)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(caption, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

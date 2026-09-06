@@ -105,7 +105,7 @@ fun NightHistoryChart(
         val max = maxOf(values.filterNotNull().maxOrNull() ?: 0f, reference ?: 0f)
         val ceiling = if (max > 0f) max * 1.12f else 1f
         val slotWidth = width / points.size
-        val barWidth = minOf(slotWidth * 0.60f, 16.dp.toPx())
+        val barWidth = minOf(slotWidth * 0.26f, 7.dp.toPx())
         fun y(value: Float) = bottom - height * (value / ceiling).coerceIn(0f, 1f)
 
         drawLine(ink.copy(alpha = 0.10f), Offset(inset, bottom), Offset(size.width - inset, bottom), 1.dp.toPx())
@@ -134,7 +134,7 @@ fun NightHistoryChart(
                     ),
                     topLeft = Offset(centerX - barWidth / 2f, top),
                     size = Size(barWidth, barHeight),
-                    cornerRadius = CornerRadius(minOf(barWidth / 2f, barHeight / 2f)),
+                    cornerRadius = CornerRadius(minOf(2.dp.toPx(), barHeight / 2f)),
                 )
             }
         }
