@@ -135,7 +135,10 @@ class BackendIsolationTests(unittest.TestCase):
         self.assertEqual(owner["daily"]["resting_hr"], 51)
         self.assertEqual(owner["sleep"]["sleep_score"], 88)
         self.assertEqual(owner["hrv"]["last_night_avg"], 61)
-        self.assertEqual(owner["readiness"]["score"], 77)
+        # A one-day fixture cannot establish the new personal baseline; it must
+        # not silently fall back to the archived Garmin readiness value (77).
+        self.assertEqual(owner["readiness"]["source"], "jingyou")
+        self.assertIsNone(owner["readiness"]["score"])
         self.assertEqual(owner["freshness"]["daily"], "2026-09-05")
         self.assertEqual(member["daily"]["resting_hr"], 50)
         self.assertEqual(member["hrv"]["last_night_avg"], 72)

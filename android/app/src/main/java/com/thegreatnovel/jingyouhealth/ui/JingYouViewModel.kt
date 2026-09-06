@@ -12,6 +12,17 @@ import com.thegreatnovel.jingyouhealth.model.ChatThread
 import com.thegreatnovel.jingyouhealth.model.Dashboard
 import com.thegreatnovel.jingyouhealth.model.ThemeMode
 import com.thegreatnovel.jingyouhealth.model.Trends
+import com.thegreatnovel.jingyouhealth.model.SleepOutcome
+import com.thegreatnovel.jingyouhealth.model.PersonalSleepReport
+import com.thegreatnovel.jingyouhealth.model.proposeSleepConfigurations
+import com.thegreatnovel.jingyouhealth.model.HomeModule
+import com.thegreatnovel.jingyouhealth.model.sleepContextSeries
+import com.thegreatnovel.jingyouhealth.model.SleepAlgorithm
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -50,6 +61,11 @@ data class JingYouUiState(
     val coachThinking: Boolean = false,
     val coachAnswerFailed: Boolean = false,
     val coachStatusIndex: Int = 0,
+    val personalSleepReports: Map<SleepOutcome, PersonalSleepReport> = emptyMap(),
+    val scoutingSleep: Boolean = false,
+    val homeModules: List<HomeModule> = listOf(HomeModule.READINESS, HomeModule.SLEEP, HomeModule.RECOVERY_SIGNALS, HomeModule.ACTIVITIES),
+    val frenchHolidays: Boolean = true,
+    val savingActivityEffort: Boolean = false,
 )
 
 class JingYouViewModel(application: Application) : AndroidViewModel(application) {
@@ -61,6 +77,8 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
     private var sessionGeneration = 0L
     private var healthGeneration = 0L
     private var threadGeneration = 0L
+    private var scoutGeneration = 0L
+    private var scoutJob: Job? = null
 
     init {
         if (storedToken != null && currentToken == null) {
@@ -74,6 +92,9 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
             language = runCatching { AppLanguage.valueOf(prefs.getString("language", AppLanguage.CHINESE.name)!!) }.getOrDefault(AppLanguage.CHINESE),
             themeMode = runCatching { ThemeMode.valueOf(prefs.getString("theme", ThemeMode.SYSTEM.name)!!) }.getOrDefault(ThemeMode.SYSTEM),
             travelAtmosphere = prefs.getBoolean("travel_atmosphere", true),
+            homeModules = prefs.getString("home_modules", null)?.split(',')?.mapNotNull { value -> runCatching { HomeModule.valueOf(value) }.getOrNull() }?.distinct()
+                ?: listOf(HomeModule.READINESS, HomeModule.SLEEP, HomeModule.RECOVERY_SIGNALS, HomeModule.ACTIVITIES),
+            frenchHolidays = prefs.getBoolean("french_holidays", true),
         )
     )
     val state: StateFlow<JingYouUiState> = _state.asStateFlow()
@@ -115,6 +136,8 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun resetSessionState(token: String?) {
+        scoutGeneration++
+        scoutJob?.cancel()
         healthGeneration++
         threadGeneration++
         _state.update {
@@ -123,6 +146,8 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
                 language = it.language,
                 themeMode = it.themeMode,
                 travelAtmosphere = it.travelAtmosphere,
+                homeModules = it.homeModules,
+                frenchHolidays = it.frenchHolidays,
             )
         }
     }
@@ -140,6 +165,33 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
     fun setTravelAtmosphere(enabled: Boolean) {
         prefs.edit().putBoolean("travel_atmosphere", enabled).apply()
         _state.update { it.copy(travelAtmosphere = enabled) }
+    }
+
+    fun setHomeModules(modules: List<HomeModule>) {
+        val ordered = modules.distinct()
+        prefs.edit().putString("home_modules", ordered.joinToString(",") { it.name }).apply()
+        _state.update { it.copy(homeModules = ordered) }
+    }
+
+    fun setFrenchHolidays(enabled: Boolean) {
+        prefs.edit().putBoolean("french_holidays", enabled).apply()
+        _state.update { it.copy(frenchHolidays = enabled) }
+        preparePersonalSleepReports()
+    }
+
+    fun saveActivityEffort(activityId: String, rpe: Double?, category: String?) {
+        val token = _state.value.token ?: return
+        if (_state.value.savingActivityEffort) return
+        val generation = sessionGeneration
+        _state.update { it.copy(savingActivityEffort = true, error = null) }
+        viewModelScope.launch {
+            val result = requestResult { api.setActivityEffort(token, activityId, rpe, category) }
+            if (!isCurrentSession(token, generation)) return@launch
+            _state.update { it.copy(savingActivityEffort = false) }
+            result.onSuccess { loadAll() }.onFailure { error ->
+                _state.update { it.copy(error = readableError(error, Failure.LOAD)) }
+            }
+        }
     }
 
     fun setSettingsOpen(open: Boolean) {
@@ -187,6 +239,7 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
                 ensureThread()
+                preparePersonalSleepReports()
             }.onFailure { error ->
                 _state.update { it.copy(loading = false, error = readableError(error, Failure.LOAD)) }
             }
@@ -221,6 +274,7 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
                         refreshStatus = "已更新",
                     )
                 }
+                preparePersonalSleepReports()
             }.onFailure { error ->
                 _state.update { it.copy(refreshStatus = "同步失败", error = readableError(error, Failure.REFRESH)) }
             }
@@ -238,6 +292,34 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
         if (first != null) openThread(first.id) else newThread()
     }
 
+    /** Pure local computation using the currently authenticated snapshot only. */
+    private fun preparePersonalSleepReports() {
+        val snapshot = _state.value
+        val token = snapshot.token ?: return
+        val date = snapshot.dashboard?.sleep?.date ?: return
+        val session = sessionGeneration
+        val request = ++scoutGeneration
+        scoutJob?.cancel()
+        _state.update { it.copy(personalSleepReports = emptyMap(), scoutingSleep = true) }
+        scoutJob = viewModelScope.launch {
+            try {
+                for (outcome in listOf(SleepOutcome.DURATION_HOURS, SleepOutcome.DEEP_HOURS, SleepOutcome.REM_HOURS, SleepOutcome.DEEP_PERCENT, SleepOutcome.REM_PERCENT)) {
+                    val report = withContext(Dispatchers.Default) {
+                        val context = currentCoroutineContext()
+                        proposeSleepConfigurations(outcome, snapshot.trends, snapshot.activities, date,
+                            algorithms = listOf(SleepAlgorithm.RANDOM_FOREST), includeEnrichedForest = true,
+                            contextSeries = sleepContextSeries(snapshot.trends), includeFrenchHolidays = snapshot.frenchHolidays,
+                            differenceOrders = listOf(0)) { context.ensureActive() }
+                    }
+                    if (!isCurrentSession(token, session) || request != scoutGeneration) return@launch
+                    _state.update { it.copy(personalSleepReports = it.personalSleepReports + (outcome to report)) }
+                }
+            } finally {
+                if (isCurrentSession(token, session) && request == scoutGeneration) _state.update { it.copy(scoutingSleep = false) }
+            }
+        }
+    }
+
     fun newThread() {
         val token = _state.value.token ?: return
         if (_state.value.threadLoading || _state.value.coachThinking) return
@@ -245,7 +327,7 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
         val request = ++threadGeneration
         _state.update { it.copy(threadLoading = true, error = null) }
         viewModelScope.launch {
-            val result = requestResult { api.createThread(token, "新对话") }
+            val result = requestResult { api.createThread(token, translate(_state.value.language, "新对话")) }
             if (!isCurrentSession(token, generation) || request != threadGeneration) return@launch
             result.onSuccess { thread ->
                 _state.update {
@@ -390,34 +472,28 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
     private fun readableError(error: Throwable?, failure: Failure): String {
         val message = error?.message.orEmpty()
         if (message.startsWith("HTTP 401") || message.startsWith("HTTP 403")) {
-            return localized("登录已过期，请在设置中退出后重新连接。", "Your session has expired. Sign out in Settings and connect again.", "Votre session a expiré. Déconnectez-vous dans les réglages, puis reconnectez-vous.", "انتهت صلاحية الجلسة. سجّل الخروج من الإعدادات ثم اتصل مجددًا.")
+            return "登录已过期，请在设置中退出后重新连接。"
         }
         if (error is UnknownHostException || error is ConnectException) {
-            return localized("暂时无法连接，请检查网络后重试。", "Unable to connect. Check your connection and try again.", "Connexion impossible. Vérifiez votre réseau et réessayez.", "تعذّر الاتصال. تحقّق من الشبكة وحاول مجددًا.")
+            return "暂时无法连接，请检查网络后重试。"
         }
         if (failure == Failure.ANSWER) {
-            return localized("回答暂时没有完成，问题已保存。可以重试回答。", "The answer did not finish. Your question is saved; you can retry the answer.", "La réponse n’a pas abouti. Votre question est enregistrée ; vous pouvez réessayer.", "لم تكتمل الإجابة. تم حفظ سؤالك، ويمكنك إعادة محاولة الإجابة.")
+            return "回答暂时没有完成，问题已保存。可以重试回答。"
         }
         if (error is SocketTimeoutException) {
-            return localized("连接超时，请稍后重试。", "The connection timed out. Please try again.", "Le délai de connexion est dépassé. Réessayez.", "انتهت مهلة الاتصال. حاول مجددًا.")
+            return "连接超时，请稍后重试。"
         }
         return when (failure) {
-            Failure.CONNECT -> localized("暂时无法登录，请重试。", "Unable to sign in. Please try again.", "Connexion impossible. Réessayez.", "تعذّر تسجيل الدخول. حاول مجددًا.")
-            Failure.LOAD -> localized("数据未能加载，请重试。", "Your data could not be loaded. Please try again.", "Vos données n’ont pas pu être chargées. Réessayez.", "تعذّر تحميل بياناتك. حاول مجددًا.")
-            Failure.REFRESH -> localized("同步暂时未完成，已有数据仍然保留。", "Sync did not finish. Your existing data is still available.", "La synchronisation n’a pas abouti. Vos données restent disponibles.", "لم تكتمل المزامنة. لا تزال بياناتك السابقة متاحة.")
-            Failure.NEW_THREAD -> localized("未能创建对话，请重试。", "Unable to start a conversation. Please try again.", "Impossible de créer une conversation. Réessayez.", "تعذّر بدء محادثة. حاول مجددًا.")
-            Failure.OPEN_THREAD -> localized("未能打开这段对话，请重试。", "Unable to open this conversation. Please try again.", "Impossible d’ouvrir cette conversation. Réessayez.", "تعذّر فتح هذه المحادثة. حاول مجددًا.")
-            Failure.SEND -> localized("消息未能发送，草稿已保留。", "The message could not be sent. Your draft is saved.", "Le message n’a pas pu être envoyé. Votre brouillon est conservé.", "تعذّر إرسال الرسالة. تم الاحتفاظ بالمسودة.")
-            Failure.ANSWER -> localized("回答暂时没有完成，可以重试。", "The answer did not finish. Please retry.", "La réponse n’a pas abouti. Réessayez.", "لم تكتمل الإجابة. حاول مجددًا.")
+            Failure.CONNECT -> "暂时无法登录，请重试。"
+            Failure.LOAD -> "数据未能加载，请重试。"
+            Failure.REFRESH -> "同步暂时未完成，已有数据仍然保留。"
+            Failure.NEW_THREAD -> "未能创建对话，请重试。"
+            Failure.OPEN_THREAD -> "未能打开这段对话，请重试。"
+            Failure.SEND -> "消息未能发送，草稿已保留。"
+            Failure.ANSWER -> "回答暂时没有完成，可以重试。"
         }
     }
 
-    private fun localized(zh: String, en: String, fr: String, ar: String): String = when (_state.value.language) {
-        AppLanguage.CHINESE -> zh
-        AppLanguage.ENGLISH -> en
-        AppLanguage.FRENCH -> fr
-        AppLanguage.ARABIC -> ar
-    }
 }
 
 private enum class Failure { CONNECT, LOAD, REFRESH, NEW_THREAD, OPEN_THREAD, SEND, ANSWER }
@@ -435,7 +511,8 @@ private fun List<ChatMessage>.hasUnansweredQuestion(): Boolean =
 
 private fun List<ChatThread>.touchThread(threadId: String, updatedAt: String, firstQuestion: String? = null): List<ChatThread> {
     val thread = firstOrNull { it.id == threadId } ?: return this
-    val title = if (thread.title in listOf("新对话", "问问我的身体") && !firstQuestion.isNullOrBlank()) {
+    val defaultTitles = AppLanguage.entries.flatMap { language -> listOf(translate(language, "新对话"), translate(language, "问问我的身体")) }
+    val title = if (thread.title in defaultTitles && !firstQuestion.isNullOrBlank()) {
         firstQuestion.trim().replace('\n', ' ').take(36)
     } else thread.title
     return listOf(thread.copy(title = title, updatedAt = updatedAt)) + filterNot { it.id == threadId }

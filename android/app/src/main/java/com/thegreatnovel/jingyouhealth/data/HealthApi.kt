@@ -14,6 +14,8 @@ import com.thegreatnovel.jingyouhealth.model.SleepSummary
 import com.thegreatnovel.jingyouhealth.model.TrendPoint
 import com.thegreatnovel.jingyouhealth.model.Trends
 import com.thegreatnovel.jingyouhealth.model.UserSummary
+import com.thegreatnovel.jingyouhealth.model.RecoveryComponent
+import com.thegreatnovel.jingyouhealth.model.SleepClockPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -37,12 +39,27 @@ class HealthApi(private val baseUrl: String = BuildConfig.API_BASE_URL) {
         parseDashboard(payload.getJSONObject("dashboard"))
     }
 
-    suspend fun trends(token: String, days: Int = 90): Trends = withContext(Dispatchers.IO) {
+    suspend fun trends(token: String, days: Int = 180): Trends = withContext(Dispatchers.IO) {
         parseTrends(JSONObject(request("GET", "/api/trends?days=$days", token, null)))
     }
 
     suspend fun activities(token: String): List<ActivitySummary> = withContext(Dispatchers.IO) {
-        parseActivities(JSONArray(request("GET", "/api/activities?limit=120", token, null)))
+        val records = linkedMapOf<String, ActivitySummary>()
+        var offset = 0
+        while (true) {
+            val page = parseActivities(JSONArray(request("GET", "/api/activities?limit=200&offset=$offset", token, null)))
+            val before = records.size
+            page.forEach { records.putIfAbsent(it.id, it) }
+            if (page.size < 200 || records.size == before) break
+            offset += 200
+        }
+        records.values.toList()
+    }
+
+    suspend fun setActivityEffort(token: String, activityId: String, rpe: Double?, category: String?) = withContext(Dispatchers.IO) {
+        request("PUT", "/api/activities/${activityId.encodePath()}/effort", token,
+            JSONObject().put("rpe", rpe ?: JSONObject.NULL).put("category", category ?: JSONObject.NULL).toString())
+        Unit
     }
 
     suspend fun threads(token: String): List<ChatThread> = withContext(Dispatchers.IO) {
@@ -179,6 +196,16 @@ class HealthApi(private val baseUrl: String = BuildConfig.API_BASE_URL) {
                     hrvWeeklyAverage = it.optNullableDouble("hrv_weekly_average"),
                     date = it.optStringOrNull("date"),
                     sleepScore = it.optNullableDouble("sleep_score"),
+                    source = it.optStringOrNull("source"),
+                    formulaVersion = it.optStringOrNull("formula_version"),
+                    coverage = it.optNullableInt("coverage"),
+                    components = buildList {
+                        val values = it.optJSONArray("components") ?: JSONArray()
+                        for (i in 0 until values.length()) {
+                            val c = values.getJSONObject(i)
+                            add(RecoveryComponent(c.optString("key"), c.optNullableDouble("score"), c.optNullableDouble("weight"), c.optNullableDouble("value"), c.optNullableDouble("baseline")))
+                        }
+                    },
                 )
             },
             bodyBattery = battery?.let { BodyBatterySummary(it.optStringOrNull("timestamp"), it.optNullableDouble("value")) },
@@ -209,6 +236,16 @@ class HealthApi(private val baseUrl: String = BuildConfig.API_BASE_URL) {
             remHours = points(sleep, "rem_sleep_sec") { it?.div(3600.0)?.toFloat() },
             bodyBatteryCharged = points(daily, "body_battery_charged") { it?.toFloat() },
             bodyBatteryDrained = points(daily, "body_battery_drained") { it?.toFloat() },
+            steps = points(daily, "steps") { it?.toFloat() },
+            lightHours = points(sleep, "light_sleep_sec") { it?.div(3600.0)?.toFloat() },
+            awakeHours = points(sleep, "awake_sleep_sec") { it?.div(3600.0)?.toFloat() },
+            readiness = points(root.optJSONArray("readiness") ?: JSONArray(), "score") { it?.toFloat() },
+            sleepClocks = buildList {
+                for (i in 0 until sleep.length()) {
+                    val item = sleep.getJSONObject(i)
+                    add(SleepClockPoint(item.optString("date"), item.optStringOrNull("sleep_start_local"), item.optStringOrNull("sleep_end_local"), item.optBoolean("clock_offset_changed", false), item.optStringOrNull("clock_source")))
+                }
+            },
         )
     }
 
@@ -232,9 +269,15 @@ class HealthApi(private val baseUrl: String = BuildConfig.API_BASE_URL) {
                     durationS = item.optNullableDouble("duration_s"),
                     avgHr = item.optNullableDouble("avg_hr"),
                     maxHr = item.optNullableDouble("max_hr"),
-                    trainingLoad = item.optNullableDouble("activity_training_load"),
+                    trainingLoad = item.optNullableDouble("internal_load"),
                     trainingEffect = item.optNullableDouble("training_effect"),
                     calories = item.optNullableDouble("calories"),
+                    category = item.optStringOrNull("category"),
+                    categoryOverride = item.optStringOrNull("category_override"),
+                    effortRpe = item.optNullableDouble("effort_rpe").takeIf { item.optString("effort_source") == "reported" },
+                    effortSource = item.optStringOrNull("effort_source"),
+                    internalLoad = item.optNullableDouble("internal_load"),
+                    anaerobicTrainingEffect = item.optNullableDouble("anaerobic_training_effect"),
                 )
             )
         }

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 import sys
 from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from health_store import connect  # noqa: E402
 from auth import UserContext  # noqa: E402
+from derived_metrics import compute_recovery, enrich_activity, recovery_history, sleep_clock  # noqa: E402
 
 
 @contextmanager
@@ -21,42 +22,6 @@ def _con(user: UserContext):
         yield con
     finally:
         con.close()
-
-
-def _json(value: str | None) -> Any:
-    if not value:
-        return None
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return None
-
-
-def _latest_readiness(con: sqlite3.Connection) -> dict[str, Any] | None:
-    rows = con.execute(
-        """SELECT event_date,payload_json FROM raw_records
-           WHERE source='garmin' AND kind='training_readiness_raw'
-             AND payload_json NOT IN ('[]', '{}', 'null', '')
-           ORDER BY event_date DESC LIMIT 30"""
-    ).fetchall()
-    for row in rows:
-        payload = _json(row["payload_json"])
-        if not isinstance(payload, list):
-            continue
-        items = [item for item in payload if isinstance(item, dict) and (item.get("score") is not None or item.get("level") is not None)]
-        if not items:
-            continue
-        item = max(items, key=lambda x: str(x.get("timestampLocal") or x.get("timestamp") or ""))
-        return {
-            "date": row["event_date"],
-            "score": item.get("score"),
-            "level": item.get("level"),
-            "sleep_score": item.get("sleepScore"),
-            "recovery_time": item.get("recoveryTime"),
-            "acute_load": item.get("acuteLoad"),
-            "hrv_weekly_average": item.get("hrvWeeklyAverage"),
-        }
-    return None
 
 
 def _latest_body_battery(con: sqlite3.Connection) -> dict[str, Any] | None:
@@ -70,61 +35,162 @@ def _latest_body_battery(con: sqlite3.Connection) -> dict[str, Any] | None:
     return {"timestamp": row["ts"], "value": row["value"]} if row else None
 
 
+_ACTIVITY_COLUMNS = """
+    a.activity_id,a.activity_name,a.activity_type,a.start_time,a.start_time_gmt,
+    a.timezone,a.distance_m,a.duration_s,a.moving_duration_s,a.elapsed_duration_s,
+    a.avg_speed_mps,a.avg_moving_speed_mps,a.max_speed_mps,a.avg_hr,a.max_hr,a.min_hr,
+    a.avg_cadence,a.max_cadence,a.stride_length_cm,a.ground_contact_time_ms,
+    a.vertical_oscillation_cm,a.vertical_ratio,a.avg_power_w,a.max_power_w,
+    a.normalized_power_w,a.elevation_gain_m,a.elevation_loss_m,a.max_elevation_m,
+    a.min_elevation_m,a.avg_temperature,a.max_temperature,a.min_temperature,
+    a.training_effect,a.anaerobic_training_effect,a.training_effect_label,
+    a.activity_training_load,a.vo2max,a.calories,a.steps,a.body_battery_diff,
+    a.start_lat,a.start_lon,a.end_lat,a.end_lon,a.fit_path,
+    e.effort_rpe,e.category_override
+"""
+
+
+def _activity_rows(
+    con: sqlite3.Connection,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+    activity_id: str | None = None,
+) -> list[dict[str, Any]]:
+    where = "a.source='garmin'"
+    params_list: list[Any] = []
+    if activity_id is not None:
+        where += " AND a.activity_id=?"
+        params_list.append(activity_id)
+    suffix = ""
+    if limit is not None:
+        suffix = " LIMIT ? OFFSET ?"
+        params_list.extend((limit, offset))
+    rows = con.execute(
+        f"""SELECT {_ACTIVITY_COLUMNS}
+             FROM activities a
+             LEFT JOIN activity_effort e ON e.activity_id=a.activity_id
+            WHERE {where}
+            ORDER BY a.start_time DESC{suffix}""",
+        tuple(params_list),
+    ).fetchall()
+    return [enrich_activity(dict(row)) for row in rows]
+
+
+def _recovery_rows(
+    con: sqlite3.Connection,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    sleep_rows = [
+        dict(row)
+        for row in con.execute(
+            """SELECT date,sleep_score,sleep_time_sec,deep_sleep_sec,rem_sleep_sec,
+                      light_sleep_sec,awake_sleep_sec,raw_json
+                 FROM sleep_sessions WHERE source='garmin'
+                   AND (sleep_score IS NOT NULL OR sleep_time_sec IS NOT NULL
+                        OR sleep_start IS NOT NULL OR sleep_end IS NOT NULL)
+                ORDER BY date"""
+        ).fetchall()
+    ]
+    hrv_rows = [
+        dict(row)
+        for row in con.execute(
+            """SELECT date,last_night_avg,weekly_avg,status
+                 FROM hrv_daily WHERE source='garmin'
+                   AND (status IS NOT NULL OR weekly_avg IS NOT NULL OR last_night_avg IS NOT NULL)
+                ORDER BY date"""
+        ).fetchall()
+    ]
+    daily_rows = [
+        dict(row)
+        for row in con.execute(
+            """SELECT date,resting_hr,avg_stress,steps,sleep_sec,
+                      body_battery_charged,body_battery_drained
+                 FROM daily_metrics WHERE source='garmin'
+                   AND (resting_hr IS NOT NULL OR avg_stress IS NOT NULL OR steps IS NOT NULL
+                        OR sleep_sec IS NOT NULL)
+                ORDER BY date"""
+        ).fetchall()
+    ]
+    activity_rows = _activity_rows(con)
+    return sleep_rows, hrv_rows, daily_rows, activity_rows
+
+
+def _sleep_response(row: dict[str, Any]) -> dict[str, Any]:
+    payload = row.pop("raw_json", None)
+    clock = sleep_clock(payload)
+    row.update(clock)
+    # Existing clients use these names.  They now contain only explicit Local
+    # values, never the GMT fallback that older sync rows may have stored.
+    row["sleep_start"] = clock["sleep_start_local"]
+    row["sleep_end"] = clock["sleep_end_local"]
+    return row
+
+
 def dashboard(user: UserContext) -> dict[str, Any]:
     with _con(user) as con:
+        today = date.today().isoformat()
         day = con.execute(
-            """SELECT * FROM daily_metrics WHERE source='garmin'
+            """SELECT date,steps,resting_hr,avg_stress,calories,active_min,sleep_sec,
+                      deep_sleep_sec,rem_sleep_sec,body_battery_charged,body_battery_drained,
+                      floors,intensity_min,fetched_at
+               FROM daily_metrics WHERE source='garmin'
                AND (resting_hr IS NOT NULL OR avg_stress IS NOT NULL OR steps IS NOT NULL
                     OR sleep_sec IS NOT NULL OR calories IS NOT NULL
                     OR body_battery_charged IS NOT NULL OR body_battery_drained IS NOT NULL)
-               ORDER BY date DESC LIMIT 1"""
+               AND date <= ?
+               ORDER BY date DESC LIMIT 1""",
+            (today,),
         ).fetchone()
         hrv = con.execute(
             """SELECT date,status,weekly_avg,last_night_avg,last_night_5min_high,
                       baseline_balanced_low,baseline_balanced_upper
                FROM hrv_daily WHERE source='garmin'
                  AND (status IS NOT NULL OR weekly_avg IS NOT NULL OR last_night_avg IS NOT NULL)
-               ORDER BY date DESC LIMIT 1"""
+                 AND date <= ?
+               ORDER BY date DESC LIMIT 1""",
+            (today,),
         ).fetchone()
         sleep = con.execute(
             """SELECT date,sleep_score,sleep_time_sec,deep_sleep_sec,rem_sleep_sec,
-                      light_sleep_sec,awake_sleep_sec,sleep_start,sleep_end
+                      light_sleep_sec,awake_sleep_sec,raw_json
                FROM sleep_sessions WHERE source='garmin'
                  AND (sleep_score IS NOT NULL OR sleep_time_sec IS NOT NULL
                       OR sleep_start IS NOT NULL OR sleep_end IS NOT NULL)
-               ORDER BY date DESC LIMIT 1"""
+                 AND date <= ?
+               ORDER BY date DESC LIMIT 1""",
+            (today,),
         ).fetchone()
         body_battery = _latest_body_battery(con)
-        readiness = _latest_readiness(con)
-        recent_activities = [
-            dict(row)
-            for row in con.execute(
-                """SELECT activity_id,activity_name,activity_type,start_time,distance_m,
-                          duration_s,avg_hr,max_hr,training_effect,activity_training_load,calories
-                   FROM activities WHERE source='garmin'
-                   ORDER BY start_time DESC LIMIT 5"""
-            ).fetchall()
-        ]
+        sleep_rows, hrv_rows, daily_rows, activity_rows = _recovery_rows(con)
+        readiness = compute_recovery(
+            sleep_rows=sleep_rows,
+            hrv_rows=hrv_rows,
+            daily_rows=daily_rows,
+            activity_rows=activity_rows,
+        )
+        recent_activities = activity_rows[:5]
+        sleep_payload = _sleep_response(dict(sleep)) if sleep else None
         component_dates = [
             str(day["date"]) if day else None,
             str(hrv["date"]) if hrv else None,
-            str(sleep["date"]) if sleep else None,
-            str(readiness["date"]) if readiness else None,
+            str(sleep_payload["date"]) if sleep_payload else None,
+            str(readiness["date"]) if readiness.get("date") else None,
         ]
+        recovery_anchor = str(readiness["date"]) if readiness.get("date") else None
         return {
             "user": {"display_name": user.display_name, "role": user.role},
-            "date": max((value for value in component_dates if value), default=None),
+            "date": recovery_anchor or max((value for value in component_dates if value), default=None),
             "daily": dict(day) if day else None,
             "hrv": dict(hrv) if hrv else None,
-            "sleep": dict(sleep) if sleep else None,
+            "sleep": sleep_payload,
             "body_battery": body_battery,
             "readiness": readiness,
             "freshness": {
                 "daily": day["date"] if day else None,
                 "hrv": hrv["date"] if hrv else None,
-                "sleep": sleep["date"] if sleep else None,
+                "sleep": sleep_payload["date"] if sleep_payload else None,
                 "body_battery": body_battery["timestamp"] if body_battery else None,
-                "readiness": readiness["date"] if readiness else None,
+                "readiness": readiness.get("date"),
             },
             "recent_activities": recent_activities,
         }
@@ -132,55 +198,63 @@ def dashboard(user: UserContext) -> dict[str, Any]:
 def trends(user: UserContext, days: int = 30) -> dict[str, Any]:
     days = max(7, min(days, 180))
     with _con(user) as con:
-        hrv = [
-            dict(row)
-            for row in con.execute(
-                """SELECT date,last_night_avg,weekly_avg,status
-                   FROM hrv_daily WHERE source='garmin'
-                     AND (status IS NOT NULL OR weekly_avg IS NOT NULL OR last_night_avg IS NOT NULL)
-                   ORDER BY date DESC LIMIT ?""",
-                (days,),
-            ).fetchall()[::-1]
+        sleep_rows, hrv_rows, daily_rows, activity_rows = _recovery_rows(con)
+        today = date.today().isoformat()
+
+        def current_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            return [row for row in rows if str(row.get("date") or "")[:10] <= today]
+
+        def limited(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            return rows[-days:]
+
+        current_sleep_rows = current_rows(sleep_rows)
+        current_hrv_rows = current_rows(hrv_rows)
+        current_daily_rows = current_rows(daily_rows)
+        current_activity_rows = [
+            row for row in activity_rows if str(row.get("start_time") or row.get("date") or "")[:10] <= today
         ]
-        daily = [
-            dict(row)
-            for row in con.execute(
-                """SELECT date,resting_hr,avg_stress,steps,sleep_sec,
-                          body_battery_charged,body_battery_drained
-                   FROM daily_metrics WHERE source='garmin'
-                     AND (resting_hr IS NOT NULL OR avg_stress IS NOT NULL OR steps IS NOT NULL OR sleep_sec IS NOT NULL)
-                   ORDER BY date DESC LIMIT ?""",
-                (days,),
-            ).fetchall()[::-1]
+        hrv = limited(current_hrv_rows)
+        daily = limited(current_daily_rows)
+        sleep = [_sleep_response(dict(row)) for row in limited(current_sleep_rows)]
+        history_dates = [str(row["date"]) for row in sleep]
+        readiness = recovery_history(
+            dates=history_dates,
+            sleep_rows=current_sleep_rows,
+            hrv_rows=current_hrv_rows,
+            daily_rows=current_daily_rows,
+            activity_rows=current_activity_rows,
+        )
+        sleep_clocks = [
+            {
+                "date": row["date"],
+                "sleep_start_local": row.get("sleep_start_local"),
+                "sleep_end_local": row.get("sleep_end_local"),
+                "clock_source": row.get("clock_source"),
+                "clock_offset_changed": row.get("clock_offset_changed"),
+            }
+            for row in sleep
         ]
-        sleep = [
-            dict(row)
-            for row in con.execute(
-                """SELECT date,sleep_score,sleep_time_sec,deep_sleep_sec,rem_sleep_sec
-                   FROM sleep_sessions WHERE source='garmin'
-                     AND (sleep_score IS NOT NULL OR sleep_time_sec IS NOT NULL OR sleep_start IS NOT NULL OR sleep_end IS NOT NULL)
-                   ORDER BY date DESC LIMIT ?""",
-                (days,),
-            ).fetchall()[::-1]
-        ]
-        return {"days": days, "hrv": hrv, "daily": daily, "sleep": sleep}
+        return {
+            "days": days,
+            "hrv": hrv,
+            "daily": daily,
+            "sleep": sleep,
+            "readiness": readiness,
+            "sleep_clocks": sleep_clocks,
+        }
 
 
 def activities(user: UserContext, limit: int = 80, offset: int = 0) -> list[dict[str, Any]]:
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
     with _con(user) as con:
-        return [
-            dict(row)
-            for row in con.execute(
-                """SELECT activity_id,activity_name,activity_type,start_time,distance_m,duration_s,
-                          avg_hr,max_hr,avg_cadence,avg_power_w,elevation_gain_m,training_effect,
-                          anaerobic_training_effect,activity_training_load,vo2max,calories,fit_path
-                   FROM activities WHERE source='garmin'
-                   ORDER BY start_time DESC LIMIT ? OFFSET ?""",
-                (limit, offset),
-            ).fetchall()
-        ]
+        return _activity_rows(con, limit=limit, offset=offset)
+
+
+def activity_by_id(user: UserContext, activity_id: str) -> dict[str, Any] | None:
+    with _con(user) as con:
+        rows = _activity_rows(con, limit=1, activity_id=activity_id)
+        return rows[0] if rows else None
 
 
 def agent_context(user: UserContext, days: int = 42) -> dict[str, Any]:

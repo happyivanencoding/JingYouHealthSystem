@@ -9,7 +9,9 @@ enum class AppLanguage(val tag: String, val rtl: Boolean = false) {
 
 enum class ThemeMode { LIGHT, SYSTEM, DARK }
 
-enum class RootTab { TODAY, TRENDS, ACTIVITIES, COACH }
+enum class RootTab { TODAY, SLEEP, COACH, ACTIVITIES, BODY, TRENDS }
+
+enum class HomeModule { READINESS, SLEEP, RECOVERY_SIGNALS, DAILY_SIGNALS, ACTIVITIES, COACH }
 
 data class UserSummary(
     val displayName: String = "",
@@ -57,7 +59,15 @@ data class ReadinessSummary(
     val hrvWeeklyAverage: Double? = null,
     val date: String? = null,
     val sleepScore: Double? = null,
+    val source: String? = null,
+    val formulaVersion: String? = null,
+    val components: List<RecoveryComponent> = emptyList(),
+    val coverage: Int? = null,
 )
+
+data class RecoveryComponent(val key: String, val score: Double?, val weight: Double?, val value: Double? = null, val baseline: Double? = null)
+
+data class SleepClockPoint(val date: String, val startLocal: String?, val endLocal: String?, val offsetChanged: Boolean = false, val source: String? = null)
 
 data class MetricFreshness(
     val daily: String? = null,
@@ -84,6 +94,12 @@ data class ActivitySummary(
     val trainingLoad: Double? = null,
     val trainingEffect: Double? = null,
     val calories: Double? = null,
+    val category: String? = null,
+    val categoryOverride: String? = null,
+    val effortRpe: Double? = null,
+    val effortSource: String? = null,
+    val internalLoad: Double? = null,
+    val anaerobicTrainingEffect: Double? = null,
 )
 
 data class Dashboard(
@@ -115,6 +131,10 @@ data class Trends(
     val awakeHours: List<TrendPoint> = emptyList(),
     val bodyBatteryCharged: List<TrendPoint> = emptyList(),
     val bodyBatteryDrained: List<TrendPoint> = emptyList(),
+    val steps: List<TrendPoint> = emptyList(),
+    val lightHours: List<TrendPoint> = emptyList(),
+    val sleepClocks: List<SleepClockPoint> = emptyList(),
+    val readiness: List<TrendPoint> = emptyList(),
 )
 
 data class ChatThread(

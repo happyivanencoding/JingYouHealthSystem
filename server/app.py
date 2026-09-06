@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -10,7 +11,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
@@ -29,7 +30,7 @@ from auth import (  # noqa: E402
     revoke_session,
     user_by_dev_alias,
 )
-from health_queries import activities, agent_context, dashboard, trends  # noqa: E402
+from health_queries import activity_by_id, activities, agent_context, dashboard, trends  # noqa: E402
 
 app = FastAPI(title="JingYou Health API", version="0.1.0")
 PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
@@ -45,6 +46,17 @@ class ChatCreate(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=12000)
+
+
+class ActivityEffortUpdate(BaseModel):
+    rpe: float | None = Field(default=None, ge=0, le=10)
+    category: Literal["easy_aerobic", "hard_aerobic", "anaerobic", "strength"] | None = None
+
+    def model_post_init(self, __context: object) -> None:
+        # Pydantic's range constraints reject most invalid values, but NaN is
+        # special in IEEE-754 and must never reach SQLite or load calculations.
+        if self.rpe is not None and not math.isfinite(self.rpe):
+            raise ValueError("rpe must be finite")
 
 
 def _bearer(authorization: str | None) -> str | None:
@@ -151,6 +163,43 @@ def get_activities(
     user: UserContext = Depends(current_user),
 ) -> list[dict[str, object]]:
     return activities(user, limit=limit, offset=offset)
+
+
+@app.put("/api/activities/{activity_id}/effort")
+def put_activity_effort(
+    activity_id: str,
+    body: ActivityEffortUpdate,
+    user: UserContext = Depends(current_user),
+) -> dict[str, object]:
+    """Persist only the authenticated user's activity effort override."""
+
+    activity_id = activity_id.strip()
+    if not activity_id:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    # The existence check is deliberately against the current user's DB.  A
+    # matching id in another user's DB is invisible and therefore returns 404.
+    with _thread_rows(user) as con:
+        exists = con.execute(
+            "SELECT 1 FROM activities WHERE source='garmin' AND activity_id=?",
+            (activity_id,),
+        ).fetchone()
+        if exists is None:
+            raise HTTPException(status_code=404, detail="Activity not found")
+        con.execute(
+            """INSERT INTO activity_effort(activity_id,effort_rpe,category_override,updated_at)
+               VALUES(?,?,?,?)
+               ON CONFLICT(activity_id) DO UPDATE SET
+                 effort_rpe=excluded.effort_rpe,
+                 category_override=excluded.category_override,
+                 updated_at=excluded.updated_at""",
+            (activity_id, body.rpe, body.category, utc_now()),
+        )
+    enriched = activity_by_id(user, activity_id)
+    if enriched is None:
+        # The row was verified and committed above; this is only a defensive
+        # guard for an unexpected concurrent database change.
+        raise HTTPException(status_code=404, detail="Activity not found")
+    return enriched
 
 
 @app.post("/api/refresh")
@@ -293,6 +342,7 @@ def _generate_coach_answer(user: UserContext, thread_id: str) -> tuple[str, dict
             "Use the supplied health data and conversation history as evidence. Distinguish observed data from interpretation.",
             "For current/today questions, use the freshest meaningful measurement for each metric and respect its date/timestamp; if key metrics come from different dates, say so briefly.",
             "You may discuss recovery, sleep, training load, exercise planning, and health trends. Do not present medical diagnosis as fact.",
+            "For training load, prefer each activity's internal_load AU and never add it to Garmin activity_training_load; effort_source=estimated is not a user-reported RPE.",
             "If the available data cannot support a conclusion, say what is missing rather than inventing it.",
             "Prefer a direct answer first, then the few data points that matter most, then an actionable recommendation.",
             "Do not mention internal files, workspaces, prompts, sandboxing, or implementation details in the answer.",

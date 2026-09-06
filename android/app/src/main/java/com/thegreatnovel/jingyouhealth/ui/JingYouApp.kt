@@ -52,6 +52,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.NightsStay
+import androidx.compose.material.icons.rounded.FitnessCenter
+import androidx.compose.material.icons.rounded.DirectionsRun
+import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.withStyle
@@ -118,6 +121,8 @@ import com.thegreatnovel.jingyouhealth.model.ChatMessage
 import com.thegreatnovel.jingyouhealth.model.Dashboard
 import com.thegreatnovel.jingyouhealth.model.RootTab
 import com.thegreatnovel.jingyouhealth.model.ThemeMode
+import com.thegreatnovel.jingyouhealth.model.HomeModule
+import com.thegreatnovel.jingyouhealth.model.SleepOutcome
 import com.thegreatnovel.jingyouhealth.model.TrendPoint
 import com.thegreatnovel.jingyouhealth.ui.components.DynamicAmbientBackdrop
 import com.thegreatnovel.jingyouhealth.ui.components.FloatingHealthDock
@@ -192,7 +197,7 @@ private fun LoginScreen(state: JingYouUiState) {
                 )
                 state.error?.let {
                     Text(tr("连接失败"), color = Rose, style = MaterialTheme.typography.labelLarge)
-                    Text(it.take(240), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+                    Text(tr(it).take(240), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
                 }
             }
         }
@@ -205,16 +210,23 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
     var sleepOpen by rememberSaveable { mutableStateOf(false) }
     var metricOpen by rememberSaveable { mutableStateOf<HealthMetric?>(null) }
     var metricAnchor by rememberSaveable { mutableStateOf<String?>(null) }
+    var labOpen by rememberSaveable { mutableStateOf(false) }
+    var labDate by rememberSaveable { mutableStateOf<String?>(null) }
+    var labOutcome by rememberSaveable { mutableStateOf(SleepOutcome.DURATION_HOURS) }
+    var labClock by rememberSaveable { mutableStateOf(false) }
+    val openLab: (String?) -> Unit = { date -> labDate = date; labOutcome = SleepOutcome.DURATION_HOURS; labClock = false; labOpen = true }
+    val openStageLab: (String?, SleepOutcome) -> Unit = { date, outcome -> labDate = date; labOutcome = outcome; labClock = true; labOpen = true }
     val detailState = rememberSaveableStateHolder()
     var pullFraction by remember { mutableFloatStateOf(0f) }
     var activityOpen by remember { mutableStateOf<ActivitySummary?>(null) }
     var activitiesOpen by rememberSaveable { mutableStateOf(false) }
-    val detailOpen = sleepOpen || metricOpen != null || activitiesOpen
+    val detailOpen = sleepOpen || metricOpen != null || activitiesOpen || labOpen
     val askCoach: (String) -> Unit = { question ->
         viewModel.setCoachDraft(question)
         sleepOpen = false
         metricOpen = null
         activitiesOpen = false
+        labOpen = false
         selected = RootTab.COACH
     }
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -244,17 +256,20 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
             modifier = Modifier.fillMaxSize(),
         ) { tab ->
             when (tab) {
-                RootTab.TODAY -> TodayScreen(state, viewModel::refreshGarmin, { sleepOpen = true }, { metric ->
+                RootTab.TODAY -> TodayScreen(state, viewModel::refreshGarmin, { selected = RootTab.SLEEP }, { metric ->
                     metricAnchor = if (metric == HealthMetric.HRV) state.dashboard?.hrv?.date else state.dashboard?.daily?.date
                     metricOpen = metric
-                }, { activitiesOpen = true }, { activityOpen = it }, { pullFraction = it })
-                RootTab.TRENDS -> MetricExplorer(state, onSleep = { sleepOpen = true }, onAsk = askCoach)
-                RootTab.ACTIVITIES -> ActivitiesScreen(state) { activityOpen = it }
+                }, { selected = RootTab.ACTIVITIES }, { activityOpen = it }, { pullFraction = it },
+                    { selected = RootTab.BODY }, { selected = RootTab.COACH }, { viewModel.setSettingsOpen(true) })
+                RootTab.SLEEP -> SleepDetailScreen(state, { selected = RootTab.TODAY }, askCoach, onOpenLab = openLab,
+                    onStageExplore = openStageLab, topLevel = true) { metric, date -> metricAnchor = date; metricOpen = metric }
+                RootTab.BODY, RootTab.TRENDS -> MetricExplorer(state, initial = HealthMetric.READINESS, onSleep = { selected = RootTab.SLEEP }, onAsk = askCoach, onOpenLab = openLab, bodyOverview = true)
+                RootTab.ACTIVITIES -> ActivityExperience(state) { activityOpen = it }
                 RootTab.COACH -> CoachScreen(state, viewModel)
             }
         }
 
-        if (!detailOpen) Row(
+        if (!detailOpen && selected == RootTab.TODAY) Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .graphicsLayer { translationY = if (selected == RootTab.TODAY) elasticContentOffset(pullFraction).dp.toPx() else 0f }
@@ -281,11 +296,14 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 DynamicAmbientBackdrop(tab = RootTab.TRENDS, modifier = Modifier.fillMaxSize(), energy = energy, photoEnabled = state.travelAtmosphere)
                 when {
+                    labOpen -> detailState.SaveableStateProvider("sleep-lab-$labDate-$labOutcome-$labClock") {
+                        SleepInsightsScreen(state, labDate, { labOpen = false }, askCoach, initialOutcome = labOutcome)
+                    }
                     metricOpen != null -> detailState.SaveableStateProvider("metric-${metricOpen}-${metricAnchor}") {
-                        MetricExplorer(state, initial = metricOpen!!, anchorDate = metricAnchor, onBack = { metricOpen = null }, onSleep = { metricOpen = null; sleepOpen = true }, onAsk = askCoach)
+                        MetricExplorer(state, initial = metricOpen!!, anchorDate = metricAnchor, onBack = { metricOpen = null }, onSleep = { metricOpen = null; sleepOpen = true }, onAsk = askCoach, onOpenLab = openLab)
                     }
                     sleepOpen -> detailState.SaveableStateProvider("sleep") {
-                        SleepDetailScreen(state, { sleepOpen = false }, askCoach) { metric, date -> metricAnchor = date; metricOpen = metric }
+                        SleepDetailScreen(state, { sleepOpen = false }, askCoach, onOpenLab = openLab, onStageExplore = openStageLab) { metric, date -> metricAnchor = date; metricOpen = metric }
                     }
                     activitiesOpen -> {
                         BackHandler { activitiesOpen = false }
@@ -305,7 +323,7 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
         state.error?.let { error ->
             GlassPanel(modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 18.dp).padding(bottom = if (imeVisible) 8.dp else navBottom + 90.dp), padding = PaddingValues(16.dp)) {
                 Column {
-                    Text(error, style = MaterialTheme.typography.bodyMedium)
+                    Text(tr(error), style = MaterialTheme.typography.bodyMedium)
                     Row {
                         if (!state.coachAnswerFailed && state.dashboard == null) TextButton(onClick = viewModel::loadAll) { Text(tr("重新加载")) }
                         TextButton(onClick = viewModel::clearError) { Text(tr("关闭")) }
@@ -318,14 +336,17 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
     if (state.settingsOpen) {
         SettingsSheet(state = state, viewModel = viewModel)
     }
-    activityOpen?.let { activity -> ActivityDetailSheet(activity) { activityOpen = null } }
+    activityOpen?.let { original ->
+        val activity = state.activities.firstOrNull { it.id == original.id } ?: original
+        ActivityDetailSheet(activity, state.savingActivityEffort, { rpe, category -> viewModel.saveActivityEffort(activity.id, rpe, category) }) { activityOpen = null }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TodayScreen(state: JingYouUiState, onRefresh: () -> Unit, onSleep: () -> Unit,
                         onMetric: (HealthMetric) -> Unit, onActivities: () -> Unit, onActivity: (ActivitySummary) -> Unit,
-                        onPull: (Float) -> Unit) {
+                        onPull: (Float) -> Unit, onBody: () -> Unit, onCoach: () -> Unit, onCustomize: () -> Unit) {
     val pullState = remember { ElasticPullState() }
     val effectivePull = pullState.distanceFraction
     LaunchedEffect(pullState) { snapshotFlow { pullState.distanceFraction }.collect { onPull(it) } }
@@ -362,17 +383,27 @@ private fun TodayScreen(state: JingYouUiState, onRefresh: () -> Unit, onSleep: (
                     TodayHeader(state.dashboard)
                 }
             }
-            item { HealthStoryHero(state.dashboard) }
-            item { SleepEntry(state, onSleep) }
-            item { RecoverySignalsPanel(state, onSleep, onMetric) }
-            item { DailySignalsPanel(state, onMetric) }
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(tr("最近运动"), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                    TextButton(onClick = onActivities) { Text(tr("查看全部")) }
+            state.homeModules.forEach { module ->
+                item(key = "module-${module.name}") {
+                    Box(Modifier.animateItem()) {
+                        when (module) {
+                            HomeModule.READINESS -> HealthStoryHero(state.dashboard, onBody)
+                            HomeModule.SLEEP -> SleepEntry(state, onSleep)
+                            HomeModule.RECOVERY_SIGNALS -> RecoverySignalsPanel(state, onSleep, onMetric)
+                            HomeModule.DAILY_SIGNALS -> DailySignalsPanel(state, onMetric)
+                            HomeModule.COACH -> HomeCoachPrompt(onCoach)
+                            HomeModule.ACTIVITIES -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(tr("最近运动"), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                                    TextButton(onClick = onActivities) { Text(tr("查看全部")) }
+                                }
+                                state.dashboard?.recentActivities.orEmpty().take(3).forEach { activity -> ActivityCard(activity) { onActivity(activity) } }
+                            }
+                        }
+                    }
                 }
             }
-            items(state.dashboard?.recentActivities.orEmpty(), key = { it.id }) { activity -> ActivityCard(activity) { onActivity(activity) } }
+            if (state.homeModules.isEmpty()) item { QuietAction(tr("安排我的主页"), onCustomize) }
             item { Text(tr("下拉同步 Garmin 最新数据"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
@@ -429,17 +460,17 @@ private fun TodayHeader(dashboard: Dashboard?) {
 }
 
 @Composable
-private fun HealthStoryHero(dashboard: Dashboard?) {
+private fun HealthStoryHero(dashboard: Dashboard?, onBody: () -> Unit) {
     val dark = LocalJingYouDarkTheme.current
-    val scoreValue = dashboard?.readiness?.score
+    val scoreValue = dashboard?.readiness?.takeIf { it.source == "jingyou" }?.score
     val score = scoreValue ?: 0.0
     val accent = semanticAccent(scoreValue)
     val (headline, guidance) = when {
-        score >= 85 -> tr("恢复状态很好") to tr("今天可以按计划训练，身体已经准备好了。")
-        score >= 70 -> tr("恢复状态不错") to tr("保持正常节奏，留意训练后的身体反馈。")
-        score >= 50 -> tr("恢复状态一般") to tr("今天更适合稍微降低训练强度。")
+        score >= 85 -> tr("恢复状态很好") to tr("多项信号接近平时，结合今天的感受安排活动。")
+        score >= 70 -> tr("恢复状态不错") to tr("整体接近平时，留意疲劳与睡眠时长。")
+        score >= 50 -> tr("恢复状态一般") to tr("有些信号低于平时，给恢复多留一点空间。")
         scoreValue != null -> tr("身体需要恢复") to tr("优先睡眠、补水和轻量活动，让身体缓一缓。")
-        else -> tr("恢复准备度暂不可用") to tr("同步后可查看 Garmin 恢复准备度")
+        else -> tr("恢复参考正在建立") to tr("积累足够个人记录后，就能看见自己的恢复基线。")
     }
     val progress = (score / 100.0).toFloat().coerceIn(0f, 1f)
     val heroGradient = if (dark) {
@@ -464,6 +495,7 @@ private fun HealthStoryHero(dashboard: Dashboard?) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(HeroShape)
+            .clickable(role = Role.Button, onClick = onBody)
             .background(heroGradient)
             .background(
                 Brush.radialGradient(
@@ -526,7 +558,7 @@ private fun HealthStoryHero(dashboard: Dashboard?) {
             }
             Row(verticalAlignment = Alignment.Bottom) {
                 Column(Modifier.weight(1f)) {
-                    Text(tr("恢复准备度"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(tr("JingYou 恢复参考"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                       Row(verticalAlignment = Alignment.Bottom) {
                         Text(
@@ -554,6 +586,7 @@ private fun HealthStoryHero(dashboard: Dashboard?) {
                     modifier = Modifier.padding(bottom = 9.dp),
                 )
             }
+            Text(tr("查看组成与个人基线"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -627,19 +660,21 @@ private fun ActivitiesScreen(state: JingYouUiState, onBack: (() -> Unit)? = null
 
 @Composable
 private fun ActivityCard(activity: ActivitySummary, onClick: () -> Unit) {
+    val categoryColor = when (activity.category) { "strength" -> AuroraViolet; "anaerobic" -> Rose; "hard_aerobic" -> ArcticBlue; else -> ElectricCyan }
+    val categoryIcon = when (activity.category) { "strength" -> Icons.Rounded.FitnessCenter; "anaerobic" -> Icons.Rounded.Bolt; else -> Icons.Rounded.DirectionsRun }
     PressableGlassPanel(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(22.dp),
         padding = PaddingValues(horizontal = 16.dp, vertical = 15.dp),
-        accent = null,
+        accent = categoryColor,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
-                Modifier.size(42.dp).clip(RoundedCornerShape(15.dp)).background(ElectricCyan.copy(alpha = 0.09f)),
+                Modifier.size(44.dp).clip(RoundedCornerShape(15.dp)).background(categoryColor.copy(alpha = 0.13f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(activity.type.take(1).uppercase(), fontWeight = FontWeight.Bold, color = ElectricCyan.copy(alpha = 0.9f))
+                Icon(categoryIcon, null, tint = categoryColor, modifier = Modifier.size(24.dp))
             }
             Spacer(Modifier.width(13.dp))
             Column(Modifier.weight(1f)) {
@@ -652,14 +687,11 @@ private fun ActivityCard(activity: ActivitySummary, onClick: () -> Unit) {
                 )
                 Spacer(Modifier.height(7.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(13.dp)) {
-                    activity.distanceM?.let {
-                        Text(bidiMetric("%.1f %s".format(it / 1000.0, tr("公里"))), style = MaterialTheme.typography.labelLarge)
-                    }
                     activity.durationS?.let {
-                        Text(bidiMetric("${(it / 60.0).roundToInt()} ${tr("分钟")}"), style = MaterialTheme.typography.labelLarge)
+                        Text(durationText(it / 3600), style = MaterialTheme.typography.labelLarge)
                     }
-                    activity.avgHr?.let {
-                        Text(bidiMetric("${it.roundToInt()} bpm"), style = MaterialTheme.typography.labelLarge)
+                    activity.internalLoad?.let {
+                        Text(coreNumber(it, "AU"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
@@ -727,7 +759,9 @@ private fun CoachScreen(state: JingYouUiState, viewModel: JingYouViewModel) {
             item { Text(tr("历史对话"), style = MaterialTheme.typography.headlineMedium) }
             if (state.threads.isEmpty()) item { Text(tr("暂无数据")) }
             items(state.threads, key = { it.id }) { thread ->
-                QuietAction(thread.title + " · " + thread.updatedAt.take(10)) { viewModel.openThread(thread.id); historyOpen = false }
+                val defaultTitles = AppLanguage.entries.map { language -> translate(language, "新对话") }
+                val title = if (thread.title in defaultTitles) tr("新对话") else thread.title
+                QuietAction(title + " · " + thread.updatedAt.take(10)) { viewModel.openThread(thread.id); historyOpen = false }
             }
         }
     }
@@ -748,7 +782,7 @@ private fun ChatBubble(message: ChatMessage) {
                 .padding(horizontal = 16.dp, vertical = 13.dp),
         ) {
             SelectionContainer {
-                Text(readableCoachText(message.content), style = MaterialTheme.typography.bodyLarge, color = if (mine) Color.White else MaterialTheme.colorScheme.onSurface)
+                Text(readableCoachText(message.content), style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, lineHeight = 23.sp), color = if (mine) Color.White else MaterialTheme.colorScheme.onSurface)
             }
         }
     }
@@ -769,9 +803,9 @@ private fun ChatComposer(value: String, onValueChange: (String) -> Unit, onSend:
                 enabled = enabled,
                 modifier = Modifier.weight(1f).heightIn(max = 160.dp).padding(horizontal = 12.dp, vertical = 10.dp),
                 maxLines = 5,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, lineHeight = 23.sp, color = MaterialTheme.colorScheme.onSurface),
                 decorationBox = { inner ->
-                    if (value.isBlank()) Text(tr("问问你的身体"), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyLarge)
+                    if (value.isBlank()) Text(tr("问问你的身体"), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp))
                     inner()
                 },
             )
@@ -800,6 +834,7 @@ private fun SettingsSheet(state: JingYouUiState, viewModel: JingYouViewModel) {
                 Spacer(Modifier.width(9.dp))
                 Text(tr("设置"), style = MaterialTheme.typography.headlineMedium)
             }
+            HomeModulesEditor(state.homeModules, viewModel::setHomeModules)
             SettingSection(Icons.Rounded.DarkMode, tr("外观")) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ChoiceChip(tr("亮色"), state.themeMode == ThemeMode.LIGHT, Modifier.weight(1f)) { viewModel.setThemeMode(ThemeMode.LIGHT) }
@@ -835,6 +870,13 @@ private fun SettingsSheet(state: JingYouUiState, viewModel: JingYouViewModel) {
                 }
                 val travelLabel = tr("旅行氛围")
                 Switch(state.travelAtmosphere, viewModel::setTravelAtmosphere, modifier = Modifier.semantics { contentDescription = travelLabel })
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(tr("法国全国节假日"), style = MaterialTheme.typography.titleMedium)
+                    Text(tr("分析时考虑法定假日，不包含地方节日或个人休假。"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(state.frenchHolidays, viewModel::setFrenchHolidays)
             }
             TextButton(onClick = viewModel::logout) { Text(tr("退出登录")) }
         }
@@ -880,7 +922,7 @@ private fun readableCoachText(source: String) = buildAnnotatedString {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ActivityDetailSheet(activity: ActivitySummary, onDismiss: () -> Unit) {
+private fun ActivityDetailSheet(activity: ActivitySummary, busy: Boolean, onSave: (Double?, String?) -> Unit, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Text(tr("运动详情"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
@@ -891,13 +933,13 @@ private fun ActivityDetailSheet(activity: ActivitySummary, onDismiss: () -> Unit
                 Triple("分钟", activity.durationS?.div(60), tr("分钟")),
                 Triple("平均心率", activity.avgHr, "bpm"),
                 Triple("最高心率", activity.maxHr, "bpm"),
-                Triple("训练负荷", activity.trainingLoad, ""),
-                Triple("训练效果", activity.trainingEffect, ""),
+                Triple("训练负荷", activity.internalLoad, "AU"),
                 Triple("热量", activity.calories, "kcal"),
             ).forEach { (label, value, unit) ->
                 SignalRow(tr(label), value?.let { "%.1f %s".format(it, unit) } ?: "—", ArcticBlue)
             }
-            Text(tr("数据由 Garmin 提供"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(tr("基础记录来自 Garmin，内部负荷由 JingYou 计算。"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            EffortEditor(activity, onSave, busy)
             Spacer(Modifier.height(16.dp))
         }
     }

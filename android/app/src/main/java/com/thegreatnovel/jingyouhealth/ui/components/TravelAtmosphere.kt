@@ -52,7 +52,7 @@ internal fun TravelAtmosphere(
         }
     }
     val opacity by animateFloatAsState(
-        targetValue = if (enabled && artwork != null) (if (dark) 0.24f else 0.20f) * strength else 0f,
+        targetValue = if (enabled && artwork != null) (if (dark) 0.24f else 0.29f) * strength else 0f,
         animationSpec = tween(700),
         label = "travel-atmosphere",
     )
@@ -82,7 +82,7 @@ internal fun TravelAtmosphere(
         fun mask(restingAlpha: Float) = Color.Black.copy(alpha = restingAlpha + (1f - restingAlpha) * revealProgress)
         drawRect(
             brush = Brush.verticalGradient(
-                0f to mask(0.38f),
+                0f to mask(0.50f),
                 0.18f to Color.Black,
                 0.50f to mask(0.74f),
                 0.82f to mask(0.18f),
@@ -95,8 +95,9 @@ internal fun TravelAtmosphere(
         // is unfiltered; only the final 15% fades into the ambient background.
         drawRect(
             brush = Brush.linearGradient(
-                0f to mask(0.20f),
-                0.48f to mask(0.52f),
+                0f to mask(0.28f),
+                0.45f to mask(0.60f),
+                0.88f to Color.Black,
                 1f to Color.Black,
                 start = Offset.Zero,
                 end = Offset(size.width, size.height * 0.16f),

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 SCHEMA = r"""
 PRAGMA journal_mode=WAL;
@@ -165,6 +165,16 @@ CREATE TABLE IF NOT EXISTS activities (
     PRIMARY KEY (source, activity_id)
 );
 CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(source, start_time);
+
+-- User-entered activity effort and category overrides live in each user's
+-- already-isolated health database.  activity_id is therefore sufficient as
+-- the primary key and never crosses the user boundary.
+CREATE TABLE IF NOT EXISTS activity_effort (
+    activity_id TEXT PRIMARY KEY,
+    effort_rpe REAL CHECK(effort_rpe IS NULL OR (effort_rpe >= 0 AND effort_rpe <= 10)),
+    category_override TEXT CHECK(category_override IS NULL OR category_override IN ('easy_aerobic','hard_aerobic','anaerobic','strength')),
+    updated_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS activity_laps (
     source TEXT NOT NULL,

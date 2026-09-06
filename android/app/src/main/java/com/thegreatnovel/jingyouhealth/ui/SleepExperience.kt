@@ -46,10 +46,11 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 enum class HealthMetric(val label: String, val unit: String) {
-    SLEEP("睡眠时长", "小时"), HRV("昨夜 HRV", "ms"), RHR("静息心率", "bpm"), STRESS("压力", "")
+    READINESS("恢复参考", "分"), SLEEP("睡眠时长", "小时"), HRV("昨夜 HRV", "ms"), RHR("静息心率", "bpm"), STRESS("压力", "")
 }
 
 private fun HealthMetric.points(trends: Trends) = when (this) {
+    HealthMetric.READINESS -> trends.readiness
     HealthMetric.SLEEP -> trends.sleepHours
     HealthMetric.HRV -> trends.hrv
     HealthMetric.RHR -> trends.restingHr
@@ -57,6 +58,7 @@ private fun HealthMetric.points(trends: Trends) = when (this) {
 }
 
 private fun HealthMetric.accent() = when (this) {
+    HealthMetric.READINESS -> ElectricCyan
     HealthMetric.SLEEP -> ArcticBlue
     HealthMetric.HRV -> AuroraViolet
     HealthMetric.RHR -> Rose
@@ -65,6 +67,7 @@ private fun HealthMetric.accent() = when (this) {
 
 @Composable
 private fun metricText(value: Double?, unit: String = "", decimals: Int = 0): String {
+    if (unit == tr("小时")) return durationText(value)
     val language = LocalAppLanguage.current
     return if (value == null || !value.isFinite()) "—" else BidiFormatter.getInstance(language.rtl).unicodeWrap(
         String.format(Locale.forLanguageTag(language.tag), "%.${decimals}f", value) + (if (unit.isBlank()) "" else " $unit"), TextDirectionHeuristicsCompat.LTR)
@@ -73,6 +76,7 @@ private fun metricText(value: Double?, unit: String = "", decimals: Int = 0): St
 @Composable
 private fun metricRange(low: Float?, high: Float?, unit: String): String {
     if (low == null || high == null) return "—"
+    if (unit == tr("小时")) return durationText(low.toDouble()) + " – " + durationText(high.toDouble())
     val language = LocalAppLanguage.current
     val raw = String.format(Locale.forLanguageTag(language.tag), "%.1f–%.1f %s", low, high, unit)
     return BidiFormatter.getInstance(language.rtl).unicodeWrap(raw, TextDirectionHeuristicsCompat.LTR)
@@ -94,7 +98,7 @@ fun SleepEntry(state: JingYouUiState, onOpen: () -> Unit) {
             }
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                 Column(Modifier.weight(1f)) {
-                    Text(metricText(sleep?.sleepSeconds?.div(3600), tr("小时"), 1), fontSize = 32.sp, fontWeight = FontWeight.Medium)
+                    SleepDurationDisplay(sleep?.sleepSeconds?.div(3600), 32)
                     Text(sleep?.date ?: tr("等待睡眠数据"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 SleepScoreOrbit(sleep?.score)
@@ -106,19 +110,25 @@ fun SleepEntry(state: JingYouUiState, onOpen: () -> Unit) {
 }
 
 @Composable
-fun SleepDetailScreen(state: JingYouUiState, onBack: () -> Unit, onAsk: (String) -> Unit, onMetric: (HealthMetric, String?) -> Unit) {
-    BackHandler(onBack = onBack)
+fun SleepDetailScreen(state: JingYouUiState, onBack: () -> Unit, onAsk: (String) -> Unit, onOpenLab: ((String?) -> Unit)? = null,
+                      onStageExplore: ((String?, SleepOutcome) -> Unit)? = null, topLevel: Boolean = false, onMetric: (HealthMetric, String?) -> Unit) {
+    if (!topLevel) BackHandler(onBack = onBack)
     val sleep = state.dashboard?.sleep
     val date = sleep?.date
-    val base = remember(state.trends, date) { baseline(state.trends.sleepHours, date)?.takeIf { it.sampleCount >= 7 } }
+    val base = remember(state.trends, date) { baseline(state.trends.sleepHours, date, 42)?.takeIf { it.sampleCount >= 7 } }
     val hours = sleep?.sleepSeconds?.div(3600)
     val prompt = tr("请复盘这晚睡眠，结合前一天压力、同夜 HRV 和静息心率，区分观测、相关性和待验证原因。") + "\n" +
         tr("睡眠记录日期") + ": " + (date ?: tr("暂无数据")) + "\n" +
         tr("睡眠时长") + ": " + metricText(hours, tr("小时"), 1) + "\n" +
         tr("睡眠评分") + ": " + metricText(sleep?.score, "/ 100") + "\n" +
         tr("平时范围") + ": " + metricRange(base?.lowerQuartile?.toFloat(), base?.upperQuartile?.toFloat(), tr("小时"))
-    LazyColumn(contentPadding = detailPadding(), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        item { DetailHeader(tr("睡眠复盘"), date ?: tr("等待睡眠数据"), onBack) }
+    LazyColumn(contentPadding = if (topLevel) screenPadding() else detailPadding(), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        item {
+            if (topLevel) Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(tr("睡眠"), style = MaterialTheme.typography.headlineLarge)
+                Text(date ?: tr("等待睡眠数据"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else DetailHeader(tr("睡眠复盘"), date ?: tr("等待睡眠数据"), onBack)
+        }
         item {
             GlassPanel(modifier = Modifier.fillMaxWidth(), accent = ArcticBlue, padding = PaddingValues(24.dp)) {
                 Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -131,18 +141,19 @@ fun SleepDetailScreen(state: JingYouUiState, onBack: () -> Unit, onAsk: (String)
                     }), style = MaterialTheme.typography.headlineMedium)
                     Row(verticalAlignment = Alignment.Bottom) {
                         Column(Modifier.weight(1f)) {
-                            Text(metricText(sleep?.sleepSeconds?.div(3600), tr("小时"), 1), fontSize = 44.sp, lineHeight = 50.sp, fontWeight = FontWeight.Medium)
+                            SleepDurationDisplay(sleep?.sleepSeconds?.div(3600), 40)
                             Text(tr("实际睡眠"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         SleepScoreOrbit(sleep?.score)
                     }
                     RecentNights(state, 7)
                     Text(tr("分数和感受不必一致。先看记录，再寻找线索。"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    onOpenLab?.let { open -> QuietAction(tr("睡眠洞察")) { open(date) } }
                 }
             }
         }
         item {
-            SectionHeading("01", tr("和自己的平时相比"), tr("色带是过去 28 天的平时范围，圆点是这次读数"))
+            SectionHeading("01", tr("和自己的平时相比"), tr("色带是过去 42 天的平时范围，圆点是这次读数"))
             Spacer(Modifier.height(12.dp))
             GlassPanel(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(18.dp)) {
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -164,10 +175,11 @@ fun SleepDetailScreen(state: JingYouUiState, onBack: () -> Unit, onAsk: (String)
             Spacer(Modifier.height(12.dp))
             SleepComposition(sleep, state.trends)
         }
+        item { SleepTimingPanel(state.trends, date, onStageExplore?.let { open -> { outcome: SleepOutcome -> open(date, outcome) } }) }
         item {
             SectionHeading("03", tr("寻找反复出现的联动"), tr("睡眠时长与其他信号的个人历史关系"))
             Spacer(Modifier.height(12.dp))
-            AssociationPanel(state, date)
+            AssociationPanel(state, date, onOpenLab = onOpenLab?.let { open -> { open(date) } })
         }
         item {
             SectionHeading("04", tr("把感受也带进来"), tr("手表看不到的部分，可以告诉教练"))
@@ -205,7 +217,7 @@ private fun SleepScoreOrbit(score: Double?) {
 private fun RecentNights(state: JingYouUiState, count: Int, compact: Boolean = false) {
     val date = state.dashboard?.sleep?.date
     val points = remember(state.trends.sleepHours, date) { calendarWindow(state.trends.sleepHours, date, count) }
-    val base = remember(state.trends.sleepHours, date) { baseline(state.trends.sleepHours, date)?.takeIf { it.sampleCount >= 7 } }
+    val base = remember(state.trends.sleepHours, date) { baseline(state.trends.sleepHours, date, 42)?.takeIf { it.sampleCount >= 7 } }
     val caption = tr("最近 7 晚")
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
@@ -221,8 +233,8 @@ private fun RecentNights(state: JingYouUiState, count: Int, compact: Boolean = f
 @Composable
 private fun ComparisonRow(label: String, value: Double?, points: List<TrendPoint>, date: String?, unit: String,
                           decimals: Int = 0, onClick: () -> Unit) {
-    val base = remember(points, date) { baseline(points, date)?.takeIf { it.sampleCount >= 7 } }
-    val history = remember(points, base) { calendarWindow(points, base?.endDate, 28).mapNotNull { it.value } }
+    val base = remember(points, date) { baseline(points, date, 42)?.takeIf { it.sampleCount >= 7 } }
+    val history = remember(points, base) { calendarWindow(points, base?.endDate, 42).mapNotNull { it.value } }
     val accent = if (unit == "ms") AuroraViolet else ArcticBlue
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable(role = Role.Button, onClick = onClick).padding(vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -260,8 +272,8 @@ private fun SleepComposition(sleep: SleepSummary?, trends: Trends) {
         val totals = trends.sleepHours.associate { it.date to it.value }
         return numerator.map { item -> TrendPoint(item.date, item.value?.let { v -> totals[item.date]?.takeIf { it > 0 && v >= 0 && v <= it }?.let { v / it * 100 } }) }
     }
-    val deepBase = remember(trends, sleep?.date) { baseline(ratioHistory(trends.deepHours), sleep?.date)?.takeIf { it.sampleCount >= 7 } }
-    val remBase = remember(trends, sleep?.date) { baseline(ratioHistory(trends.remHours), sleep?.date)?.takeIf { it.sampleCount >= 7 } }
+    val deepBase = remember(trends, sleep?.date) { baseline(ratioHistory(trends.deepHours), sleep?.date, 42)?.takeIf { it.sampleCount >= 7 } }
+    val remBase = remember(trends, sleep?.date) { baseline(ratioHistory(trends.remHours), sleep?.date, 42)?.takeIf { it.sampleCount >= 7 } }
     GlassPanel(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(20.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -277,8 +289,7 @@ private fun SleepComposition(sleep: SleepSummary?, trends: Trends) {
                         }
                     }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(metricText(sleep?.sleepSeconds?.div(3600), decimals = 1), style = MaterialTheme.typography.headlineMedium)
-                        Text(tr("小时"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        SleepDurationDisplay(sleep?.sleepSeconds?.div(3600), 21)
                     }
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(15.dp)) {
@@ -317,7 +328,7 @@ private fun StageRow(label: String, seconds: Double?, ratio: Double?, accent: Co
 }
 
 @Composable
-fun AssociationPanel(state: JingYouUiState, date: String?, days: Int = 90) {
+fun AssociationPanel(state: JingYouUiState, date: String?, days: Int = 90, onOpenLab: (() -> Unit)? = null) {
     var selected by rememberSaveable { mutableIntStateOf(1) }
     var methodOpen by rememberSaveable { mutableStateOf(false) }
     val associations = listOf(
@@ -340,6 +351,7 @@ fun AssociationPanel(state: JingYouUiState, date: String?, days: Int = 90) {
     })
     GlassPanel(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(20.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            if (onOpenLab != null) QuietAction(tr("探索更多因素与睡眠参数"), onOpenLab)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 associations.forEachIndexed { index, item ->
                     InsightChoice(chipLabels[index], index == selected, Modifier.weight(1f)) { selected = index }
@@ -378,7 +390,7 @@ fun AssociationPanel(state: JingYouUiState, date: String?, days: Int = 90) {
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-fun MetricExplorer(state: JingYouUiState, initial: HealthMetric = HealthMetric.SLEEP, anchorDate: String? = null, onBack: (() -> Unit)? = null, onSleep: () -> Unit, onAsk: (String) -> Unit) {
+fun MetricExplorer(state: JingYouUiState, initial: HealthMetric = HealthMetric.SLEEP, anchorDate: String? = null, onBack: (() -> Unit)? = null, onSleep: () -> Unit, onAsk: (String) -> Unit, onOpenLab: ((String?) -> Unit)? = null, bodyOverview: Boolean = false) {
     var selected by rememberSaveable(initial) { mutableStateOf(initial) }
     var days by rememberSaveable { mutableIntStateOf(30) }
     if (onBack != null) BackHandler(onBack = onBack)
@@ -390,8 +402,9 @@ fun MetricExplorer(state: JingYouUiState, initial: HealthMetric = HealthMetric.S
     }
     val index = if (points.isEmpty()) 0 else (cursor * points.lastIndex).roundToInt().coerceIn(points.indices)
     val point = points.getOrNull(index)
-    val reference = remember(all, point?.date) { baseline(all, point?.date)?.takeIf { it.sampleCount >= 7 } }
-    val domainValues = points.mapNotNull { it.value } + listOfNotNull(reference?.lowerQuartile?.toFloat(), reference?.upperQuartile?.toFloat())
+    val reference = remember(all, point?.date) { baseline(all, point?.date, 42)?.takeIf { it.sampleCount >= 7 } }
+    val rollingReferences = remember(all, points) { points.map { baseline(all, it.date, 42)?.takeIf { base -> base.sampleCount >= 7 } } }
+    val domainValues = points.mapNotNull { it.value } + rollingReferences.flatMap { listOfNotNull(it?.lowerQuartile?.toFloat(), it?.upperQuartile?.toFloat()) }
     val chartLow = domainValues.minOrNull() ?: 0f
     val chartHigh = domainValues.maxOrNull() ?: 1f
     val unit = tr(selected.unit)
@@ -399,7 +412,7 @@ fun MetricExplorer(state: JingYouUiState, initial: HealthMetric = HealthMetric.S
         item {
             if (onBack != null) DetailHeader(tr("指标探索"), tr("从趋势走向理解"), onBack)
             else Column(Modifier.fillMaxWidth().padding(end = 48.dp)) {
-                Text(tr("趋势"), style = MaterialTheme.typography.headlineLarge)
+                Text(tr(if (bodyOverview) "身体状态" else "趋势"), style = MaterialTheme.typography.headlineLarge)
                 Text(tr("从趋势走向理解"), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -421,7 +434,8 @@ fun MetricExplorer(state: JingYouUiState, initial: HealthMetric = HealthMetric.S
             GlassPanel(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(22.dp), accent = selected.accent()) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(tr(selected.label), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(metricText(point?.value?.toDouble(), unit, if (selected == HealthMetric.SLEEP) 1 else 0), fontSize = 42.sp, fontWeight = FontWeight.Medium)
+                    if (selected == HealthMetric.SLEEP) SleepDurationDisplay(point?.value?.toDouble(), 40)
+                    else Text(metricText(point?.value?.toDouble(), unit), fontSize = 42.sp, fontWeight = FontWeight.Medium)
                     Text(point?.date ?: tr("暂无数据"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val cursorLabel = (point?.date ?: tr("暂无数据")) + " · " + metricText(point?.value?.toDouble(), unit, 1)
                     val chartLabel = tr(selected.label)
@@ -429,12 +443,25 @@ fun MetricExplorer(state: JingYouUiState, initial: HealthMetric = HealthMetric.S
                         val accent = selected.accent()
                         Box(Modifier.fillMaxWidth().height(128.dp)) {
                             Canvas(Modifier.fillMaxSize()) {
-                                reference?.let { base ->
+                                if (rollingReferences.isNotEmpty()) {
                                     fun y(value: Double): Float = size.height * (0.86f - (if (chartHigh > chartLow) ((value.toFloat() - chartLow) / (chartHigh - chartLow)) else 0.5f) * 0.72f)
-                                    val top = y(base.upperQuartile)
-                                    val bottom = y(base.lowerQuartile)
-                                    drawRoundRect(accent.copy(alpha = 0.10f), topLeft = Offset(0f, top), size = androidx.compose.ui.geometry.Size(size.width, (bottom - top).coerceAtLeast(3.dp.toPx())))
-                                    drawLine(accent.copy(alpha = 0.40f), Offset(0f, y(base.median)), Offset(size.width, y(base.median)), 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(8.dp.toPx(), 5.dp.toPx())))
+                                    fun x(index: Int): Float = 2.dp.toPx() + (size.width - 4.dp.toPx()) * index / points.lastIndex.coerceAtLeast(1)
+                                    val segments = mutableListOf<List<Pair<Int, MetricBaseline>>>()
+                                    var current = mutableListOf<Pair<Int, MetricBaseline>>()
+                                    rollingReferences.forEachIndexed { i, base ->
+                                        if (base != null) current.add(i to base) else if (current.isNotEmpty()) { segments.add(current); current = mutableListOf() }
+                                    }
+                                    if (current.isNotEmpty()) segments.add(current)
+                                    segments.forEach { segment ->
+                                        val band = androidx.compose.ui.graphics.Path()
+                                        segment.forEachIndexed { i, (at, base) -> if (i == 0) band.moveTo(x(at), y(base.upperQuartile)) else band.lineTo(x(at), y(base.upperQuartile)) }
+                                        segment.asReversed().forEach { (at, base) -> band.lineTo(x(at), y(base.lowerQuartile)) }
+                                        band.close()
+                                        drawPath(band, accent.copy(alpha = 0.13f))
+                                        val middle = androidx.compose.ui.graphics.Path()
+                                        segment.forEachIndexed { i, (at, base) -> if (i == 0) middle.moveTo(x(at), y(base.median)) else middle.lineTo(x(at), y(base.median)) }
+                                        drawPath(middle, accent.copy(alpha = 0.48f), style = Stroke(1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(7.dp.toPx(), 4.dp.toPx()))))
+                                    }
                                 }
                             }
                             Sparkline(points.map { it.value }, Modifier.fillMaxSize(), accent, domain = chartLow..chartHigh)
@@ -474,9 +501,10 @@ fun MetricExplorer(state: JingYouUiState, initial: HealthMetric = HealthMetric.S
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(selected.accent().copy(alpha = 0.23f)))
                             Spacer(Modifier.width(7.dp))
-                            Text(tr("你的平时范围") + " " + metricRange(reference.lowerQuartile.toFloat(), reference.upperQuartile.toFloat(), unit), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(tr("当前个人参考") + " " + metricRange(reference.lowerQuartile.toFloat(), reference.upperQuartile.toFloat(), unit), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
+                    Text(tr("色带按每一天此前 42 天重新计算，会随你的长期状态移动。"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val values = points.mapNotNull { it.value?.takeIf(Float::isFinite) }
                     Text(tr("有效记录") + " ${values.size}/$days · " + tr("范围") + " " +
                         metricRange(values.minOrNull(), values.maxOrNull(), unit),
@@ -484,14 +512,15 @@ fun MetricExplorer(state: JingYouUiState, initial: HealthMetric = HealthMetric.S
                 }
             }
         }
+        if (selected == HealthMetric.READINESS) item { RecoveryBreakdown(state.dashboard?.readiness) }
         item {
-            if (selected == HealthMetric.SLEEP) QuietAction(tr("打开最近一晚复盘"), onSleep)
+            if (selected == HealthMetric.SLEEP && !bodyOverview) QuietAction(tr("打开最近一晚复盘"), onSleep)
             val title = tr(selected.label)
             val question = tr("请解释这个指标的近期变化、计算方法及与睡眠的关系。")
             QuietAction(tr("问教练这个变化意味着什么")) { onAsk("$question\n$title · ${point?.date.orEmpty()}") }
         }
         item { SectionHeading("↗", tr("睡眠与其他信号"), "$days " + tr("天") + " · " + tr("按日期配对")) }
-        item { AssociationPanel(state, end, days) }
+        item { AssociationPanel(state, end, days, onOpenLab = onOpenLab?.let { open -> { open(end) } }) }
         item { MethodNotes() }
     }
 }
@@ -514,8 +543,8 @@ private fun MethodNotes() {
             }
             AnimatedVisibility(open) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text(tr("个人基线：取记录日期前 28 个日历日的有效值中位数，至少 7 条才比较。它不是 Garmin HRV 基线或医学阈值。"), style = MaterialTheme.typography.bodyMedium)
-                    Text(tr("色带覆盖此前 28 天中间 50% 的有效读数，不是医学正常范围；竖线为中位数。"), style = MaterialTheme.typography.bodyMedium)
+                    Text(tr("个人基线：取记录日期前 42 个日历日的有效值中位数，至少 7 条才比较。它不是 Garmin HRV 基线或医学阈值。"), style = MaterialTheme.typography.bodyMedium)
+                    Text(tr("色带覆盖此前 42 天中间 50% 的有效读数，不是医学正常范围；竖线为中位数。"), style = MaterialTheme.typography.bodyMedium)
                     Text(tr("Pearson r：在所选窗口按日期配对，计算 cov(x,y)/(σx·σy)。范围 −1 到 1；零方差或少于 14 对时不显示。0.3 仅作弱线性关系的描述界线，不代表显著性。"), style = MaterialTheme.typography.bodyMedium)
                     Text(tr("睡眠日期沿用 Garmin 记录日期。压力取前一天；HRV 与静息心率取同一记录日期。不同日期的数据不会混用，也不推算缺失值。"), style = MaterialTheme.typography.bodyMedium)
                     Text(tr("睡眠阶段是设备根据心率、HRV 与活动估计的结果。这些信号可能并不独立，不能据此确定没睡好的原因。"), style = MaterialTheme.typography.bodyMedium)
@@ -529,11 +558,11 @@ private fun MethodNotes() {
 
 @Composable
 fun DetailHeader(title: String, subtitle: String, onBack: () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         IconButton(onClick = onBack, modifier = Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f))) {
             Icon(Icons.AutoMirrored.Rounded.ArrowBack, tr("返回"))
         }
-        Text(title, style = MaterialTheme.typography.headlineLarge)
+        Text(title, modifier = Modifier.fillMaxWidth(), style = MaterialTheme.typography.headlineLarge)
         Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -583,6 +612,6 @@ private fun detailPadding() = PaddingValues(start = 20.dp, end = 20.dp,
     bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 28.dp)
 
 @Composable
-private fun screenPadding() = PaddingValues(start = 18.dp, end = 18.dp,
+internal fun screenPadding() = PaddingValues(start = 18.dp, end = 18.dp,
     top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 34.dp,
     bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 112.dp)

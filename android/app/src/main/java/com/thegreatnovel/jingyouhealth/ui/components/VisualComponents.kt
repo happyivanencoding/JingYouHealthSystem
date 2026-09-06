@@ -34,8 +34,10 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.DirectionsRun
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.Insights
+import androidx.compose.material.icons.rounded.NightsStay
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -90,9 +92,12 @@ val CompactShape = RoundedCornerShape(20.dp)
 
 private fun tabColors(tab: RootTab): Triple<Color, Color, Color> = when (tab) {
     RootTab.TODAY -> Triple(ArcticBlue, ElectricCyan, AuroraViolet)
-    RootTab.TRENDS -> Triple(AuroraViolet, ArcticBlue, Color(0xFFB8A0D8))
-    RootTab.ACTIVITIES -> Triple(ElectricCyan, Color(0xFF3A9CFF), Amber)
+    RootTab.SLEEP -> Triple(AuroraViolet, DeepViolet, Color(0xFFB8A0D8))
     RootTab.COACH -> Triple(Color(0xFFA58AD4), Color(0xFF7E92D8), ElectricCyan)
+    RootTab.ACTIVITIES -> Triple(ElectricCyan, Color(0xFF3A9CFF), Amber)
+    RootTab.BODY -> Triple(ElectricCyan, ArcticBlue, Color(0xFF78B8B3))
+    // Trends remains available as a legacy route and follows the Body field.
+    RootTab.TRENDS -> Triple(ElectricCyan, ArcticBlue, Color(0xFF78B8B3))
 }
 
 @Composable
@@ -198,9 +203,10 @@ fun DynamicAmbientBackdrop(
             reveal = reveal,
             strength = when (tab) {
                 RootTab.TODAY -> 1f
-                RootTab.TRENDS -> 0.72f
-                RootTab.ACTIVITIES -> 0.56f
+                RootTab.SLEEP -> 0.72f
                 RootTab.COACH -> 0.40f
+                RootTab.ACTIVITIES -> 0.56f
+                RootTab.BODY, RootTab.TRENDS -> 0.68f
             },
         )
     }
@@ -217,7 +223,7 @@ fun GlassPanel(
     val dark = LocalJingYouDarkTheme.current
     val top by animateColorAsState(if (dark) GlassDark.copy(alpha = 0.56f) else GlassLight.copy(alpha = 0.64f), tween(450), label = "glass-top")
     val bottom by animateColorAsState(if (dark) NightBlue.copy(alpha = 0.34f) else Ceramic.copy(alpha = 0.40f), tween(450), label = "glass-bottom")
-    val borderStart by animateColorAsState(if (dark) GlassBorderDark.copy(alpha = 0.13f) else GlassBorderLight.copy(alpha = 0.58f), tween(450), label = "glass-edge")
+    val borderStart by animateColorAsState(if (dark) GlassBorderDark.copy(alpha = 0.13f) else GlassBorderLight.copy(alpha = 0.36f), tween(450), label = "glass-edge")
     val borderEnd = if (dark) Color.White.copy(alpha = 0.025f) else Graphite.copy(alpha = 0.038f)
     val accentOverlay = accent?.copy(alpha = if (dark) 0.105f else 0.065f) ?: Color.Transparent
 
@@ -226,7 +232,7 @@ fun GlassPanel(
             .clip(shape)
             .background(Brush.verticalGradient(listOf(top, bottom)))
             .background(Brush.linearGradient(listOf(accentOverlay, Color.Transparent, Color.Transparent)))
-            .border(1.dp, Brush.linearGradient(listOf(borderStart, borderEnd, borderStart.copy(alpha = 0.18f))), shape)
+            .border(1.dp, Brush.linearGradient(listOf(borderStart, borderEnd, borderStart.copy(alpha = 0.12f))), shape)
             .padding(padding),
     ) {
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
@@ -365,15 +371,17 @@ fun FloatingHealthDock(
 ) {
     val dark = LocalJingYouDarkTheme.current
     val items = listOf(
-        Triple(RootTab.TODAY, Icons.Rounded.Home, tr("今日")),
+        Triple(RootTab.TODAY, Icons.Rounded.Home, tr("主页")),
+        Triple(RootTab.SLEEP, Icons.Rounded.NightsStay, tr("睡眠")),
         Triple(RootTab.COACH, Icons.Rounded.Forum, tr("教练")),
-        Triple(RootTab.TRENDS, Icons.Rounded.Insights, tr("趋势")),
+        Triple(RootTab.ACTIVITIES, Icons.Rounded.DirectionsRun, tr("活动")),
+        Triple(RootTab.BODY, Icons.Rounded.Favorite, tr("身体")),
     )
     val shell = if (dark) {
         Brush.horizontalGradient(
             listOf(
                 NightBlue.copy(alpha = 0.94f),
-                DeepViolet.copy(alpha = 0.30f),
+                Color(0xFF272637).copy(alpha = 0.96f),
                 NightBlue.copy(alpha = 0.94f),
             ),
         )
@@ -388,20 +396,21 @@ fun FloatingHealthDock(
     }
     Box(
         modifier = modifier
-            .fillMaxWidth(0.70f)
+            .fillMaxWidth(0.94f)
+            .heightIn(min = 64.dp, max = 72.dp)
             .graphicsLayer {
                 shadowElevation = 6.dp.toPx()
-                shape = RoundedCornerShape(25.dp)
+                shape = RoundedCornerShape(27.dp)
                 clip = false
             }
-            .clip(RoundedCornerShape(25.dp))
+            .clip(RoundedCornerShape(27.dp))
             .background(shell)
             .border(
                 1.dp,
-                if (dark) Color.White.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.68f),
-                RoundedCornerShape(25.dp),
+                if (dark) Color.White.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.45f),
+                RoundedCornerShape(27.dp),
             )
-            .padding(3.dp),
+            .padding(horizontal = 3.dp, vertical = 2.dp),
     ) {
         Row(
             Modifier.fillMaxWidth().selectableGroup(),
@@ -441,7 +450,7 @@ private fun DockItem(
     val scale by animateFloatAsState(
         targetValue = when {
             pressed -> 0.96f
-            selected -> 1.035f
+            selected -> 1.08f
             else -> 1f
         },
         animationSpec = spring(dampingRatio = 0.72f, stiffness = 620f),
@@ -457,9 +466,10 @@ private fun DockItem(
         animationSpec = tween(240, easing = FastOutSlowInEasing),
         label = "dock-halo",
     )
+    val labelStyle = MaterialTheme.typography.labelMedium.copy(fontSize = 10.5.sp, lineHeight = 12.sp)
     Box(
         modifier = modifier
-            .heightIn(min = 48.dp)
+            .heightIn(min = 48.dp, max = 68.dp)
             .clip(RoundedCornerShape(24.dp))
             .selectable(
                 selected = selected,
@@ -470,27 +480,28 @@ private fun DockItem(
                     if (!selected) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     onClick()
                 },
-            )
+        )
             .semantics { contentDescription = label }
-            .padding(vertical = 2.dp),
+            .padding(horizontal = 2.dp, vertical = 1.dp),
         contentAlignment = Alignment.Center,
     ) {
         Box(
             modifier = Modifier
-                .width(56.dp)
-                .height(36.dp)
+                .fillMaxWidth()
+                .heightIn(min = 54.dp, max = 66.dp)
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
                     translationY = lift.dp.toPx()
                 }
-                .clip(RoundedCornerShape(17.dp))
+                .clip(RoundedCornerShape(19.dp))
                 .background(
                     if (selected) {
                         Brush.horizontalGradient(
                             listOf(
-                                accent.copy(alpha = 0.15f + 0.05f * halo),
-                                ArcticBlue.copy(alpha = 0.13f + 0.06f * halo),
+                                accent.copy(alpha = 0.10f + 0.08f * halo),
+                                ArcticBlue.copy(alpha = 0.08f + 0.07f * halo),
+                                Color.Transparent,
                             ),
                         )
                     } else {
@@ -499,7 +510,10 @@ private fun DockItem(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(23.dp))
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(27.dp))
+                Text(label, style = labelStyle, color = iconColor, maxLines = 1)
+            }
         }
     }
 }

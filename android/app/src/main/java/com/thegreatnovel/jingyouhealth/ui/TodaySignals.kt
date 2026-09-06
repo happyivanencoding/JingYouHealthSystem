@@ -83,22 +83,15 @@ fun RecoverySignalsPanel(
                 onClick = { onMetric(HealthMetric.HRV) },
             )
             SignalsDivider()
-            BatteryReading(state)
-            SignalsDivider()
-            Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                    .clickable(role = Role.Button, onClick = onSleep)
-                    .heightIn(min = 56.dp).padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Rounded.NightsStay, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(tr("查看这晚睡眠"), style = MaterialTheme.typography.labelLarge)
-                    Text(tr("回看睡眠、压力与恢复"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
-            }
+            SignalBaselineRow(
+                label = tr("静息心率"),
+                current = signalCurrent(state.trends.restingHr, state.dashboard?.daily?.date, state.dashboard?.daily?.restingHr),
+                points = state.trends.restingHr,
+                date = state.dashboard?.daily?.date,
+                unit = "bpm",
+                accent = Rose,
+                onClick = { onMetric(HealthMetric.RHR) },
+            )
         }
     }
 }
@@ -155,7 +148,7 @@ private fun SignalBaselineRow(
 ) {
     val history = remember(points, date) {
         val previousDay = date?.let { runCatching { LocalDate.parse(it).minusDays(1).toString() }.getOrNull() }
-        calendarWindow(points, previousDay, days = 28)
+        calendarWindow(points, previousDay, days = 42)
             .mapNotNull { it.value?.takeIf { value -> value.isFinite() && value >= 0f } }
     }
     val sorted = remember(history) { history.sorted() }

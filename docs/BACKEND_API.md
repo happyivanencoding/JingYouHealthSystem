@@ -61,6 +61,8 @@ jingyouhealth://auth?token=<jingyou-session>
 
 The Cloudflare Access auth domain and this application's audience are configured as Windows user environment variables (`JINGYOU_CF_TEAM_DOMAIN`, `JINGYOU_CF_AUD`). The Access application has a single Allow policy containing the two private JingYou account emails; the backend then maps the verified email claim to exactly one `UserContext` and issues its own JingYou session.
 
+The current Cloudflare Access login configuration for the Health app uses **One-time PIN**. The allow policy still admits only the original two JingYou account emails; their addresses are intentionally omitted from this public contract. An earlier IdP configuration that admitted only Cloudflare account members rejected the MEMBER login; that configuration was corrected in Chrome. The backend still performs the final email-to-user mapping and does not expose an account switcher.
+
 ## Common authorization
 
 Except health check, development login, and auth bridge, endpoints require:
@@ -89,9 +91,34 @@ GET /api/me
 GET /api/dashboard
 ```
 
-Returns the current user's latest normalized Garmin snapshot, including the latest meaningful daily summary, HRV, sleep, Body Battery, Training Readiness when present, and recent activities. Empty same-day placeholder rows created before Garmin has synchronized real values are skipped.
+Returns the current user's latest normalized Garmin snapshot, including the latest meaningful daily summary, HRV, sleep, Body Battery, the JingYou recovery reference index, and recent activities. Empty same-day placeholder rows created before Garmin has synchronized real values are skipped.
 
 The response also includes a `freshness` object with the source date/timestamp for each major component (`daily`, `hrv`, `sleep`, `body_battery`, `readiness`). Coach/current-state logic uses these component timestamps rather than assuming every metric belongs to the same calendar day.
+
+`recent_activities` uses the same enriched activity fields and internal-load calculation as `GET /api/activities`.
+
+`readiness` is the JingYou personal recovery reference index shared by the dashboard, trends, and Coach context. It has the following shape:
+
+```json
+{
+  "source": "jingyou",
+  "formula_version": "personal-v1",
+  "date": "2026-09-06",
+  "score": 78.4,
+  "level": "moderate",
+  "components": [
+    {"key": "sleep", "score": 82.0, "weight": 0.4, "value": 7.4, "baseline": 8.0},
+    {"key": "hrv", "score": 79.0, "weight": 0.3, "value": 51.0, "baseline": 50.0},
+    {"key": "rhr", "score": 76.0, "weight": 0.2, "value": 61.0, "baseline": 60.0},
+    {"key": "load", "score": 75.0, "weight": 0.1, "value": 180.0, "baseline": 210.0}
+  ],
+  "coverage": 4
+}
+```
+
+The four component keys are always stable; a component with insufficient data has a null score. `coverage` is the number of components with a score. The overall score is null unless sleep is available and at least two components are available; available weights are then renormalized. `date` follows the latest meaningful sleep record, so an empty same-day placeholder does not become the current recovery date. Garmin's original training-readiness payload remains in the local raw archive and is not used as this primary score.
+
+`personal-v1` is an engineering composite for this user's historical data, not a clinical scale or a medically validated universal formula. Sleep, log-HRV, and resting-HR references use the strict prior 42 days. Load compares the recent 3 days against observed dates in the prior 28 days; future rows and another user's database are excluded. Load component details also include `source`, `estimated_ratio`, and `reported_ratio` when available. An estimated activity effort is a category default, never a claim about the user's actual RPE.
 
 ### Trends
 
@@ -101,7 +128,9 @@ GET /api/trends?days=30
 
 `days`: 7–180.
 
-Returns chronological series for HRV, daily metrics, and sleep.
+Returns chronological series for HRV, daily metrics, sleep, and the same recovery calculation used by the dashboard. `readiness` contains `{date, score, value}` entries (with `value` equal to `score`) and is calculated from one in-memory historical snapshot, so a historical date uses the same formula and windows as the dashboard.
+
+Each `sleep` row includes `light_sleep_sec`, `awake_sleep_sec`, `sleep_start_local`, `sleep_end_local`, `clock_source`, and `clock_offset_changed`. Local timestamps are ISO 8601 strings without a timezone suffix. Garmin's numeric `sleepStartTimestampLocal` / `sleepEndTimestampLocal` are decoded as UTC to recover their local wall-clock fields. GMT is used only to compare start/end offsets; it never fills a missing Local endpoint. If either Local endpoint is missing, non-finite, reversed, or spans more than 36 hours, all clock fields are null. The same clock fields are also available under `sleep_clocks`. The complete raw sleep payload is kept in the database but is never returned by this endpoint.
 
 ### Activities
 
@@ -110,6 +139,31 @@ GET /api/activities?limit=80&offset=0
 ```
 
 `limit`: 1–200.
+
+Each activity includes the Garmin `training_effect_label` and `anaerobic_training_effect` plus JingYou effort fields:
+
+```json
+{
+  "category": "easy_aerobic",
+  "category_override": null,
+  "effort_rpe": 3.0,
+  "effort_source": "estimated",
+  "internal_load": 45.0
+}
+```
+
+Category resolution is user override first, then strength/weight-training type, recognizable training-effect label, and finally the aerobic/anaerobic training-effect fallback. `internal_load` is duration in minutes × effective RPE in arbitrary units (AU). A self-reported effort has `effort_source=reported`; otherwise the category defaults are easy aerobic 3, hard aerobic 6, anaerobic 8, and strength 6 with `effort_source=estimated`. The Garmin `activity_training_load` field is retained as source data for compatibility, but is not added to `internal_load` and Coach is instructed to prefer `internal_load`.
+
+### Save activity effort and category
+
+```http
+PUT /api/activities/{activity_id}/effort
+Content-Type: application/json
+
+{"rpe": 7.5, "category": "hard_aerobic"}
+```
+
+Both fields are nullable. Sending `null` clears that user's override; `category: null` returns the automatic classification. The activity must exist in the authenticated user's own database, otherwise the endpoint returns `404`. The response is the same enriched activity object returned by `GET /api/activities`. `activity_effort` is stored in that user's database only; it cannot be used to read or modify another user's activity.
 
 ### Garmin pull refresh
 

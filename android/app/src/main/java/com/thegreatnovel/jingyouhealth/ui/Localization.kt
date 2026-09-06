@@ -1,5 +1,6 @@
 package com.thegreatnovel.jingyouhealth.ui
 
+
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -10,6 +11,19 @@ import com.thegreatnovel.jingyouhealth.model.AppLanguage
 private data class Translation(val en: String, val fr: String, val ar: String)
 
 private val translations = mapOf(
+    "回答暂时没有完成，可以重试。" to Translation("The answer did not finish. Please retry.", "La réponse n’a pas abouti. Réessayez.", "لم تكتمل الإجابة. حاول مجددًا."),
+    "消息未能发送，草稿已保留。" to Translation("The message could not be sent. Your draft is saved.", "Le message n’a pas pu être envoyé. Votre brouillon est conservé.", "تعذّر إرسال الرسالة. تم الاحتفاظ بالمسودة."),
+    "未能打开这段对话，请重试。" to Translation("Unable to open this conversation. Please try again.", "Impossible d’ouvrir cette conversation. Réessayez.", "تعذّر فتح هذه المحادثة. حاول مجددًا."),
+    "未能创建对话，请重试。" to Translation("Unable to start a conversation. Please try again.", "Impossible de créer une conversation. Réessayez.", "تعذّر بدء محادثة. حاول مجددًا."),
+    "同步暂时未完成，已有数据仍然保留。" to Translation("Sync did not finish. Your existing data is still available.", "La synchronisation n’a pas abouti. Vos données restent disponibles.", "لم تكتمل المزامنة. لا تزال بياناتك السابقة متاحة."),
+    "数据未能加载，请重试。" to Translation("Your data could not be loaded. Please try again.", "Vos données n’ont pas pu être chargées. Réessayez.", "تعذّر تحميل بياناتك. حاول مجددًا."),
+    "暂时无法登录，请重试。" to Translation("Unable to sign in. Please try again.", "Connexion impossible. Réessayez.", "تعذّر تسجيل الدخول. حاول مجددًا."),
+    "连接超时，请稍后重试。" to Translation("The connection timed out. Please try again.", "Le délai de connexion est dépassé. Réessayez.", "انتهت مهلة الاتصال. حاول مجددًا."),
+    "回答暂时没有完成，问题已保存。可以重试回答。" to Translation("The answer did not finish. Your question is saved; you can retry the answer.", "La réponse n’a pas abouti. Votre question est enregistrée ; vous pouvez réessayer.", "لم تكتمل الإجابة. تم حفظ سؤالك، ويمكنك إعادة محاولة الإجابة."),
+    "暂时无法连接，请检查网络后重试。" to Translation("Unable to connect. Check your connection and try again.", "Connexion impossible. Vérifiez votre réseau et réessayez.", "تعذّر الاتصال. تحقّق من الشبكة وحاول مجددًا."),
+    "登录已过期，请在设置中退出后重新连接。" to Translation("Your session has expired. Sign out in Settings and connect again.", "Votre session a expiré. Déconnectez-vous dans les réglages, puis reconnectez-vous.", "انتهت صلاحية الجلسة. سجّل الخروج من الإعدادات ثم اتصل مجددًا."),
+    "新对话" to Translation("New conversation", "Nouvelle conversation", "محادثة جديدة"),
+    "问问我的身体" to Translation("Ask my body", "Interroger mon corps", "اسأل جسمي"),
     "今日" to Translation("Today", "Aujourd’hui", "اليوم"),
     "趋势" to Translation("Trends", "Tendances", "الاتجاهات"),
     "运动" to Translation("Activities", "Activités", "الأنشطة"),
@@ -88,7 +102,7 @@ val LocalAppLanguage = staticCompositionLocalOf { AppLanguage.CHINESE }
 
 fun translate(language: AppLanguage, sourceChinese: String): String {
     if (language == AppLanguage.CHINESE) return sourceChinese
-    val item = translations[sourceChinese] ?: return translateInsight(language, sourceChinese) ?: sourceChinese
+    val item = translations[sourceChinese] ?: return translateInsight(language, sourceChinese) ?: translateSleepLab(language, sourceChinese) ?: translateActivity(language, sourceChinese) ?: translateCore(language, sourceChinese) ?: sourceChinese
     return when (language) {
         AppLanguage.CHINESE -> sourceChinese
         AppLanguage.ENGLISH -> item.en
