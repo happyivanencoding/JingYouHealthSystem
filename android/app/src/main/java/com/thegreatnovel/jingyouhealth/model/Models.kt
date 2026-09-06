@@ -23,6 +23,8 @@ data class DailySummary(
     val avgStress: Double? = null,
     val calories: Double? = null,
     val activeMin: Double? = null,
+    val bodyBatteryCharged: Double? = null,
+    val bodyBatteryDrained: Double? = null,
 )
 
 data class HrvSummary(
@@ -53,6 +55,16 @@ data class ReadinessSummary(
     val recoveryTime: Double? = null,
     val acuteLoad: Double? = null,
     val hrvWeeklyAverage: Double? = null,
+    val date: String? = null,
+    val sleepScore: Double? = null,
+)
+
+data class MetricFreshness(
+    val daily: String? = null,
+    val hrv: String? = null,
+    val sleep: String? = null,
+    val bodyBattery: String? = null,
+    val readiness: String? = null,
 )
 
 data class BodyBatterySummary(
@@ -83,6 +95,7 @@ data class Dashboard(
     val readiness: ReadinessSummary? = null,
     val bodyBattery: BodyBatterySummary? = null,
     val recentActivities: List<ActivitySummary> = emptyList(),
+    val freshness: MetricFreshness? = null,
 )
 
 data class TrendPoint(
@@ -95,6 +108,13 @@ data class Trends(
     val restingHr: List<TrendPoint> = emptyList(),
     val sleepHours: List<TrendPoint> = emptyList(),
     val stress: List<TrendPoint> = emptyList(),
+    val sleepScores: List<TrendPoint> = emptyList(),
+    val deepHours: List<TrendPoint> = emptyList(),
+    val remHours: List<TrendPoint> = emptyList(),
+    // The current trends endpoint does not expose awake time; keep missing data missing.
+    val awakeHours: List<TrendPoint> = emptyList(),
+    val bodyBatteryCharged: List<TrendPoint> = emptyList(),
+    val bodyBatteryDrained: List<TrendPoint> = emptyList(),
 )
 
 data class ChatThread(

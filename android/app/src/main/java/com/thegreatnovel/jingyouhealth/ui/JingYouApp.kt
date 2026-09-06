@@ -11,6 +11,11 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -38,9 +43,27 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.Switch
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.NightsStay
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowForward
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Language
@@ -63,7 +86,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -71,6 +101,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.Image
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -79,6 +111,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.text.BidiFormatter
 import com.thegreatnovel.jingyouhealth.BuildConfig
+import com.thegreatnovel.jingyouhealth.R
 import com.thegreatnovel.jingyouhealth.model.ActivitySummary
 import com.thegreatnovel.jingyouhealth.model.AppLanguage
 import com.thegreatnovel.jingyouhealth.model.ChatMessage
@@ -96,6 +129,8 @@ import com.thegreatnovel.jingyouhealth.ui.components.Sparkline
 import com.thegreatnovel.jingyouhealth.ui.components.StatusPill
 import com.thegreatnovel.jingyouhealth.ui.components.TypingBubble
 import com.thegreatnovel.jingyouhealth.ui.components.semanticAccent
+import com.thegreatnovel.jingyouhealth.ui.components.ElasticPullState
+import com.thegreatnovel.jingyouhealth.ui.components.elasticContentOffset
 import com.thegreatnovel.jingyouhealth.ui.theme.Amber
 import com.thegreatnovel.jingyouhealth.ui.theme.ArcticBlue
 import com.thegreatnovel.jingyouhealth.ui.theme.AuroraViolet
@@ -139,7 +174,7 @@ private fun LoginScreen(state: JingYouUiState) {
                         .background(Brush.linearGradient(listOf(AuroraViolet, ArcticBlue, ElectricCyan))),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
+                    Image(painterResource(R.drawable.jingyou_symbol_v2), contentDescription = null, modifier = Modifier.fillMaxSize())
                 }
                 Text("JingYou Health", style = MaterialTheme.typography.headlineLarge)
                 Text(
@@ -167,6 +202,21 @@ private fun LoginScreen(state: JingYouUiState) {
 @Composable
 private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
     var selected by rememberSaveable { mutableStateOf(RootTab.TODAY) }
+    var sleepOpen by rememberSaveable { mutableStateOf(false) }
+    var metricOpen by rememberSaveable { mutableStateOf<HealthMetric?>(null) }
+    var metricAnchor by rememberSaveable { mutableStateOf<String?>(null) }
+    val detailState = rememberSaveableStateHolder()
+    var pullFraction by remember { mutableFloatStateOf(0f) }
+    var activityOpen by remember { mutableStateOf<ActivitySummary?>(null) }
+    var activitiesOpen by rememberSaveable { mutableStateOf(false) }
+    val detailOpen = sleepOpen || metricOpen != null || activitiesOpen
+    val askCoach: (String) -> Unit = { question ->
+        viewModel.setCoachDraft(question)
+        sleepOpen = false
+        metricOpen = null
+        activitiesOpen = false
+        selected = RootTab.COACH
+    }
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val density = LocalDensity.current
@@ -180,6 +230,8 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
             energy = energy,
             stress = state.dashboard?.daily?.avgStress?.toFloat(),
             sleepScore = state.dashboard?.sleep?.score?.toFloat(),
+            photoEnabled = state.travelAtmosphere,
+            photoReveal = if (selected == RootTab.TODAY && !detailOpen) (pullFraction / 1.2f).coerceIn(0f, 1f) else 0f,
         )
         AnimatedContent(
             targetState = selected,
@@ -192,16 +244,20 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
             modifier = Modifier.fillMaxSize(),
         ) { tab ->
             when (tab) {
-                RootTab.TODAY -> TodayScreen(state, viewModel::refreshGarmin)
-                RootTab.TRENDS -> TrendsScreen(state)
-                RootTab.ACTIVITIES -> ActivitiesScreen(state)
+                RootTab.TODAY -> TodayScreen(state, viewModel::refreshGarmin, { sleepOpen = true }, { metric ->
+                    metricAnchor = if (metric == HealthMetric.HRV) state.dashboard?.hrv?.date else state.dashboard?.daily?.date
+                    metricOpen = metric
+                }, { activitiesOpen = true }, { activityOpen = it }, { pullFraction = it })
+                RootTab.TRENDS -> MetricExplorer(state, onSleep = { sleepOpen = true }, onAsk = askCoach)
+                RootTab.ACTIVITIES -> ActivitiesScreen(state) { activityOpen = it }
                 RootTab.COACH -> CoachScreen(state, viewModel)
             }
         }
 
-        Row(
+        if (!detailOpen) Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
+                .graphicsLayer { translationY = if (selected == RootTab.TODAY) elasticContentOffset(pullFraction).dp.toPx() else 0f }
                 .padding(top = statusTop + 8.dp, end = 18.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -209,7 +265,7 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
         }
 
         AnimatedVisibility(
-            visible = !(selected == RootTab.COACH && imeVisible),
+            visible = !detailOpen && !(selected == RootTab.COACH && imeVisible),
             modifier = Modifier.align(Alignment.BottomCenter),
             enter = fadeIn(tween(180)),
             exit = fadeOut(tween(140)),
@@ -217,23 +273,69 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
             FloatingHealthDock(
                 selected = selected,
                 onSelect = { selected = it },
-                modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = navBottom + 10.dp),
+                modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = navBottom + 10.dp)
+                    .graphicsLayer { translationY = if (selected == RootTab.TODAY) elasticContentOffset(pullFraction).dp.toPx() else 0f },
             )
+        }
+        if (detailOpen) {
+            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                DynamicAmbientBackdrop(tab = RootTab.TRENDS, modifier = Modifier.fillMaxSize(), energy = energy, photoEnabled = state.travelAtmosphere)
+                when {
+                    metricOpen != null -> detailState.SaveableStateProvider("metric-${metricOpen}-${metricAnchor}") {
+                        MetricExplorer(state, initial = metricOpen!!, anchorDate = metricAnchor, onBack = { metricOpen = null }, onSleep = { metricOpen = null; sleepOpen = true }, onAsk = askCoach)
+                    }
+                    sleepOpen -> detailState.SaveableStateProvider("sleep") {
+                        SleepDetailScreen(state, { sleepOpen = false }, askCoach) { metric, date -> metricAnchor = date; metricOpen = metric }
+                    }
+                    activitiesOpen -> {
+                        BackHandler { activitiesOpen = false }
+                        ActivitiesScreen(state, onBack = { activitiesOpen = false }) { activityOpen = it }
+                    }
+                }
+            }
+        }
+        if (state.loading && state.dashboard == null) {
+            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background.copy(alpha = 0.9f)), contentAlignment = Alignment.Center) {
+                Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                    Text(tr("正在加载你的健康记录"), style = MaterialTheme.typography.titleMedium)
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+            }
+        }
+        state.error?.let { error ->
+            GlassPanel(modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 18.dp).padding(bottom = if (imeVisible) 8.dp else navBottom + 90.dp), padding = PaddingValues(16.dp)) {
+                Column {
+                    Text(error, style = MaterialTheme.typography.bodyMedium)
+                    Row {
+                        if (!state.coachAnswerFailed && state.dashboard == null) TextButton(onClick = viewModel::loadAll) { Text(tr("重新加载")) }
+                        TextButton(onClick = viewModel::clearError) { Text(tr("关闭")) }
+                    }
+                }
+            }
         }
     }
 
     if (state.settingsOpen) {
         SettingsSheet(state = state, viewModel = viewModel)
     }
+    activityOpen?.let { activity -> ActivityDetailSheet(activity) { activityOpen = null } }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TodayScreen(state: JingYouUiState, onRefresh: () -> Unit) {
-    val pullState = rememberPullToRefreshState()
+private fun TodayScreen(state: JingYouUiState, onRefresh: () -> Unit, onSleep: () -> Unit,
+                        onMetric: (HealthMetric) -> Unit, onActivities: () -> Unit, onActivity: (ActivitySummary) -> Unit,
+                        onPull: (Float) -> Unit) {
+    val pullState = remember { ElasticPullState() }
+    val effectivePull = pullState.distanceFraction
+    LaunchedEffect(pullState) { snapshotFlow { pullState.distanceFraction }.collect { onPull(it) } }
+    DisposableEffect(Unit) { onDispose { onPull(0f) } }
     PullToRefreshBox(
-        isRefreshing = state.refreshing,
-        onRefresh = onRefresh,
+        // The photo gesture is always available, even during a long Garmin request.
+        // Material releases its gesture spring independently; the ViewModel owns
+        // the real request and prevents concurrent syncs.
+        isRefreshing = false,
+        onRefresh = { if (!state.refreshing) onRefresh() },
         state = pullState,
         modifier = Modifier.fillMaxSize(),
         indicator = {
@@ -246,7 +348,7 @@ private fun TodayScreen(state: JingYouUiState, onRefresh: () -> Unit) {
         },
     ) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().graphicsLayer { translationY = elasticContentOffset(effectivePull).dp.toPx() },
             contentPadding = PaddingValues(
                 start = 18.dp,
                 end = 18.dp,
@@ -255,31 +357,43 @@ private fun TodayScreen(state: JingYouUiState, onRefresh: () -> Unit) {
             ),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            item { TodayHeader(state.dashboard) }
+            item {
+                Box(Modifier.graphicsLayer { alpha = (1f - effectivePull.coerceAtLeast(0f) / 1.2f).coerceIn(0f, 1f) }) {
+                    TodayHeader(state.dashboard)
+                }
+            }
             item { HealthStoryHero(state.dashboard) }
-            item { RecoveryContributors(state.dashboard) }
-            item { SecondarySignals(state.dashboard) }
+            item { SleepEntry(state, onSleep) }
+            item { RecoverySignalsPanel(state, onSleep, onMetric) }
+            item { DailySignalsPanel(state, onMetric) }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(tr("最近运动"), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                    Text(tr("下拉同步 Garmin 最新数据"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = onActivities) { Text(tr("查看全部")) }
                 }
             }
-            items(state.dashboard?.recentActivities.orEmpty(), key = { it.id }) { activity -> ActivityCard(activity) }
+            items(state.dashboard?.recentActivities.orEmpty(), key = { it.id }) { activity -> ActivityCard(activity) { onActivity(activity) } }
+            item { Text(tr("下拉同步 Garmin 最新数据"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
 }
 
 @Composable
 private fun RefreshAura(fraction: Float, refreshing: Boolean, status: String?, modifier: Modifier = Modifier) {
+    if (!refreshing && fraction <= 0.01f) return
     val progress = fraction.coerceIn(0f, 1.25f)
     val active by animateFloatAsState(if (refreshing) 1f else progress, tween(220), label = "refresh-progress")
-    val alpha = if (refreshing) 1f else progress.coerceIn(0f, 1f)
+    val indicatorAlpha = if (refreshing) 1f else progress.coerceIn(0f, 1f)
+    val rotation = if (refreshing) {
+        val infinite = rememberInfiniteTransition(label = "refresh-orbit")
+        val angle by infinite.animateFloat(0f, 360f, infiniteRepeatable(tween(1700, easing = LinearEasing)), label = "refresh-orbit-angle")
+        angle
+    } else active * 260f
     Box(
         modifier = modifier
             .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 8.dp)
             .graphicsLayer {
-                this.alpha = alpha
+                this.alpha = indicatorAlpha
                 scaleX = 0.72f + active * 0.28f
                 scaleY = 0.72f + active * 0.28f
             },
@@ -287,9 +401,9 @@ private fun RefreshAura(fraction: Float, refreshing: Boolean, status: String?, m
     ) {
         GlassPanel(shape = RoundedCornerShape(999.dp), padding = PaddingValues(horizontal = 16.dp, vertical = 9.dp), accent = ElectricCyan) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Refresh, contentDescription = null, tint = ElectricCyan, modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = active * 260f })
+                Icon(Icons.Rounded.Refresh, contentDescription = null, tint = ElectricCyan, modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = rotation })
                 Spacer(Modifier.width(8.dp))
-                Text(tr(status ?: "正在读取 Garmin"), style = MaterialTheme.typography.labelLarge)
+                Text(tr(status ?: if (fraction >= 1f) "松开即可同步" else "拉开，看看蓝瓷"), style = MaterialTheme.typography.labelLarge)
             }
         }
     }
@@ -303,28 +417,29 @@ private fun TodayHeader(dashboard: Dashboard?) {
         in 12..17 -> tr("下午好")
         else -> tr("晚上好")
     }
-    Column(Modifier.padding(top = 10.dp, end = 52.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(Modifier.fillMaxWidth().padding(top = 10.dp, end = 52.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         // Keep the greeting and the profile name on separate typographic lines. This is
         // visually calmer and avoids mixed Arabic/Latin BiDi punctuation on supported RTL.
         Text(greeting, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         dashboard?.user?.displayName?.takeIf { it.isNotBlank() }?.let {
             Text(it, style = MaterialTheme.typography.headlineLarge)
         }
+        dashboard?.date?.let { Text(tr("最新记录") + " · " + bidiMetric(it), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 
 @Composable
 private fun HealthStoryHero(dashboard: Dashboard?) {
     val dark = LocalJingYouDarkTheme.current
-    val scoreValue = dashboard?.readiness?.score ?: dashboard?.sleep?.score
+    val scoreValue = dashboard?.readiness?.score
     val score = scoreValue ?: 0.0
     val accent = semanticAccent(scoreValue)
     val (headline, guidance) = when {
         score >= 85 -> tr("恢复状态很好") to tr("今天可以按计划训练，身体已经准备好了。")
         score >= 70 -> tr("恢复状态不错") to tr("保持正常节奏，留意训练后的身体反馈。")
         score >= 50 -> tr("恢复状态一般") to tr("今天更适合稍微降低训练强度。")
-        score > 0 -> tr("身体需要恢复") to tr("优先睡眠、补水和轻量活动，让身体缓一缓。")
-        else -> tr("正在了解你的状态") to tr("同步更多数据后，我会把今天最重要的信号放在这里。")
+        scoreValue != null -> tr("身体需要恢复") to tr("优先睡眠、补水和轻量活动，让身体缓一缓。")
+        else -> tr("恢复准备度暂不可用") to tr("同步后可查看 Garmin 恢复准备度")
     }
     val progress = (score / 100.0).toFloat().coerceIn(0f, 1f)
     val heroGradient = if (dark) {
@@ -400,10 +515,7 @@ private fun HealthStoryHero(dashboard: Dashboard?) {
                     ),
                 ),
         )
-        Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            dashboard?.readiness?.level?.takeIf { it.isNotBlank() }?.let {
-                StatusPill(it.replace('_', ' '), accent)
-            }
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
                 Text(headline, style = MaterialTheme.typography.headlineMedium)
                 Text(
@@ -415,15 +527,16 @@ private fun HealthStoryHero(dashboard: Dashboard?) {
             Row(verticalAlignment = Alignment.Bottom) {
                 Column(Modifier.weight(1f)) {
                     Text(tr("恢复准备度"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Row(verticalAlignment = Alignment.Bottom) {
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                      Row(verticalAlignment = Alignment.Bottom) {
                         Text(
-                            if (score > 0) score.roundToInt().toString() else "—",
+                            if (scoreValue != null) score.roundToInt().toString() else "—",
                             fontSize = 58.sp,
                             lineHeight = 60.sp,
                             fontWeight = FontWeight.SemiBold,
                             letterSpacing = (-1.4).sp,
                         )
-                        if (score > 0) {
+                        if (scoreValue != null) {
                             Text(
                                 " / 100",
                                 modifier = Modifier.padding(bottom = 7.dp),
@@ -431,10 +544,11 @@ private fun HealthStoryHero(dashboard: Dashboard?) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                      }
                     }
                 }
                 Text(
-                    tr("今天的身体状态"),
+                    dashboard?.readiness?.date ?: tr("今天的身体状态"),
                     style = MaterialTheme.typography.labelMedium,
                     color = accent,
                     modifier = Modifier.padding(bottom = 9.dp),
@@ -470,56 +584,6 @@ private fun HealthStoryHero(dashboard: Dashboard?) {
 }
 
 @Composable
-private fun RecoveryContributors(dashboard: Dashboard?) {
-    val hrv = dashboard?.hrv?.lastNightAvg?.roundToInt()?.let { "$it ms" } ?: "—"
-    val sleep = dashboard?.sleep?.sleepSeconds?.let { "%.1f %s".format(it / 3600.0, tr("小时")) } ?: "—"
-    val battery = dashboard?.bodyBattery?.value?.roundToInt()?.toString() ?: "—"
-    GlassPanel(
-        modifier = Modifier.fillMaxWidth(),
-        padding = PaddingValues(horizontal = 18.dp, vertical = 17.dp),
-        accent = AuroraViolet,
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text(tr("影响恢复"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ContributorMetric(tr("昨夜 HRV"), hrv, AuroraViolet, Modifier.weight(1f))
-                ContributorMetric(tr("睡眠"), sleep, ArcticBlue, Modifier.weight(1f))
-                ContributorMetric(tr("身体电量"), battery, ElectricCyan, Modifier.weight(1f))
-            }
-        }
-    }
-}
-
-@Composable
-private fun ContributorMetric(label: String, value: String, accent: Color, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Box(Modifier.size(7.dp).clip(CircleShape).background(accent))
-        Text(bidiMetric(value), style = MaterialTheme.typography.titleLarge)
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun SecondarySignals(dashboard: Dashboard?) {
-    val restingHr = dashboard?.daily?.restingHr?.roundToInt()?.let { "$it bpm" } ?: "—"
-    val stress = dashboard?.daily?.avgStress?.roundToInt()?.toString() ?: "—"
-    val steps = dashboard?.daily?.steps?.let { "%,d".format(it) } ?: "—"
-    GlassPanel(
-        modifier = Modifier.fillMaxWidth(),
-        padding = PaddingValues(horizontal = 18.dp, vertical = 17.dp),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
-            Text(tr("今日信号"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            SignalRow(tr("静息心率"), restingHr, Rose)
-            SoftDivider()
-            SignalRow(tr("压力"), stress, Amber)
-            SoftDivider()
-            SignalRow(tr("步数"), steps, ElectricCyan)
-        }
-    }
-}
-
-@Composable
 private fun SignalRow(label: String, value: String, accent: Color) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(7.dp).clip(CircleShape).background(accent.copy(alpha = 0.88f)))
@@ -539,72 +603,7 @@ private fun bidiMetric(value: String): String =
     if (LocalAppLanguage.current.rtl) BidiFormatter.getInstance(true).unicodeWrap(value) else value
 
 @Composable
-private fun TrendsScreen(state: JingYouUiState) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = 18.dp,
-            end = 18.dp,
-            top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 34.dp,
-            bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 112.dp,
-        ),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item {
-            Column(Modifier.padding(end = 50.dp)) {
-                Text(tr("趋势"), style = MaterialTheme.typography.headlineLarge)
-                Text(tr("过去 30 天"), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        item { TrendCollection(state) }
-    }
-}
-
-@Composable
-private fun TrendCollection(state: JingYouUiState) {
-    GlassPanel(
-        modifier = Modifier.fillMaxWidth(),
-        padding = PaddingValues(horizontal = 18.dp, vertical = 20.dp),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            TrendSection(tr("HRV 趋势"), state.trends.hrv, "ms", AuroraViolet)
-            SoftDivider()
-            TrendSection(tr("静息心率趋势"), state.trends.restingHr, "bpm", Rose)
-            SoftDivider()
-            TrendSection(tr("睡眠时长"), state.trends.sleepHours, tr("小时"), ArcticBlue)
-            SoftDivider()
-            TrendSection(tr("压力趋势"), state.trends.stress, "", Amber)
-        }
-    }
-}
-
-@Composable
-private fun TrendSection(title: String, points: List<TrendPoint>, unit: String, accent: Color) {
-    Column {
-        Row(verticalAlignment = Alignment.Bottom) {
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(Modifier.size(7.dp).clip(CircleShape).background(accent.copy(alpha = 0.9f)))
-                    Text(title, style = MaterialTheme.typography.titleMedium)
-                }
-                Spacer(Modifier.height(3.dp))
-                Text(points.lastOrNull()?.date.orEmpty(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            val latest = points.lastOrNull { it.value != null }?.value
-            val display = if (latest != null) {
-                if (unit.isBlank()) "%.1f".format(latest) else "%.1f %s".format(latest, unit)
-            } else {
-                "—"
-            }
-            Text(bidiMetric(display), style = MaterialTheme.typography.headlineMedium, color = accent)
-        }
-        Spacer(Modifier.height(12.dp))
-        Sparkline(values = points.map { it.value }, modifier = Modifier.fillMaxWidth().height(82.dp), accent = accent)
-    }
-}
-
-@Composable
-private fun ActivitiesScreen(state: JingYouUiState) {
+private fun ActivitiesScreen(state: JingYouUiState, onBack: (() -> Unit)? = null, onActivity: (ActivitySummary) -> Unit) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
@@ -616,19 +615,20 @@ private fun ActivitiesScreen(state: JingYouUiState) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Column(Modifier.padding(end = 50.dp)) {
+            if (onBack != null) DetailHeader(tr("运动"), "${state.activities.size} " + tr("运动"), onBack)
+            else Column(Modifier.padding(end = 50.dp)) {
                 Text(tr("运动"), style = MaterialTheme.typography.headlineLarge)
                 Text("${state.activities.size} ${tr("运动")}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        items(state.activities, key = { it.id }) { ActivityCard(it) }
+        items(state.activities, key = { it.id }) { activity -> ActivityCard(activity) { onActivity(activity) } }
     }
 }
 
 @Composable
-private fun ActivityCard(activity: ActivitySummary) {
+private fun ActivityCard(activity: ActivitySummary, onClick: () -> Unit) {
     PressableGlassPanel(
-        onClick = {},
+        onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(22.dp),
         padding = PaddingValues(horizontal = 16.dp, vertical = 15.dp),
@@ -664,7 +664,7 @@ private fun ActivityCard(activity: ActivitySummary) {
                 }
             }
             Icon(
-                Icons.Rounded.ArrowForward,
+                Icons.AutoMirrored.Rounded.ArrowForward,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
                 modifier = Modifier.size(19.dp),
@@ -673,112 +673,62 @@ private fun ActivityCard(activity: ActivitySummary) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CoachScreen(state: JingYouUiState, viewModel: JingYouViewModel) {
-    var draft by rememberSaveable { mutableStateOf("") }
+    var historyOpen by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
-    val density = LocalDensity.current
-    val imeVisible = WindowInsets.ime.getBottom(density) > 0
-    val closedBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 100.dp
-    val statuses = listOf("正在读取睡眠", "正在比较最近几周", "正在形成建议")
-    LaunchedEffect(state.messages.size, state.coachThinking) {
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val busy = state.coachThinking || state.threadLoading
+    LaunchedEffect(state.messages.size, state.coachThinking, state.activeThreadId) {
         if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex + if (state.coachThinking) 1 else 0)
     }
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 28.dp)
-            .imePadding()
-            .padding(bottom = if (imeVisible) 8.dp else closedBottomPadding),
-    ) {
+    Column(Modifier.fillMaxSize()
+        .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 28.dp)
+        .imePadding().padding(bottom = if (imeVisible) 8.dp else WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 100.dp)) {
         Row(Modifier.padding(horizontal = 18.dp).padding(end = 48.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(tr("教练"), style = MaterialTheme.typography.headlineLarge)
-                Text(tr("问问你的身体"), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(tr("问问你的身体"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            GlassIcon(Icons.Rounded.Add, tr("开始新的对话"), viewModel::newThread)
+            GlassIcon(Icons.Rounded.History, tr("历史对话"), enabled = !busy) { historyOpen = true }
+            Spacer(Modifier.width(6.dp))
+            GlassIcon(Icons.Rounded.Add, tr("开始新的对话"), enabled = !busy) { viewModel.newThread() }
         }
-        Spacer(Modifier.height(12.dp))
+        if (state.threadLoading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp))
         if (state.messages.isEmpty() && !state.coachThinking) {
-            Box(
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 18.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(86.dp)
-                            .clip(RoundedCornerShape(30.dp))
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(
-                                        AuroraViolet.copy(alpha = 0.88f),
-                                        ArcticBlue.copy(alpha = 0.82f),
-                                        ElectricCyan.copy(alpha = 0.78f),
-                                    ),
-                                ),
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Box(
-                            Modifier
-                                .size(64.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.10f)),
-                        )
-                        Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = Color.White, modifier = Modifier.size(34.dp))
-                    }
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(tr("问问你的身体"), style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
-                        Text(
-                            tr("比如：我今天适合跑 10km 吗？"),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                        )
-                    }
-                    ChatComposer(
-                        value = draft,
-                        onValueChange = { draft = it },
-                        onSend = {
-                            val text = draft.trim()
-                            if (text.isNotBlank()) {
-                                draft = ""
-                                viewModel.sendMessage(text)
-                            }
-                        },
-                        enabled = true,
-                    )
+            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 24.dp),
+                verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Rounded.NightsStay, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(40.dp))
+                Spacer(Modifier.height(18.dp))
+                Text(tr("从这一晚，了解自己"), style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(24.dp))
+                listOf("为什么昨晚没睡好", "解释睡眠与 HRV 的关系", "训练之后怎么恢复").forEach { key ->
+                    val question = tr(key)
+                    QuietAction(question) { viewModel.setCoachDraft(question) }
+                    Spacer(Modifier.height(8.dp))
                 }
             }
         } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
+            LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(state.messages, key = { it.id }) { ChatBubble(it) }
-                if (state.coachThinking) {
-                    item { TypingBubble(tr(statuses[state.coachStatusIndex.coerceIn(statuses.indices)])) }
+                if (state.coachThinking) item { TypingBubble(tr("教练正在分析")) }
+                if (state.coachAnswerFailed) item {
+                    QuietAction(tr("继续生成回答"), viewModel::retryAnswer)
                 }
             }
-            ChatComposer(
-                value = draft,
-                onValueChange = { draft = it },
-                onSend = {
-                    val text = draft.trim()
-                    if (text.isNotBlank()) {
-                        draft = ""
-                        viewModel.sendMessage(text)
-                    }
-                },
-                enabled = !state.coachThinking,
-            )
+        }
+        ChatComposer(state.coachDraft, viewModel::setCoachDraft, { viewModel.sendMessage(state.coachDraft) },
+            enabled = !busy && !state.coachAnswerFailed && state.activeThreadId != null)
+    }
+    if (historyOpen) ModalBottomSheet(onDismissRequest = { historyOpen = false }, containerColor = MaterialTheme.colorScheme.surface) {
+        LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item { Text(tr("历史对话"), style = MaterialTheme.typography.headlineMedium) }
+            if (state.threads.isEmpty()) item { Text(tr("暂无数据")) }
+            items(state.threads, key = { it.id }) { thread ->
+                QuietAction(thread.title + " · " + thread.updatedAt.take(10)) { viewModel.openThread(thread.id); historyOpen = false }
+            }
         }
     }
 }
@@ -789,7 +739,7 @@ private fun ChatBubble(message: ChatMessage) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
         Box(
             modifier = Modifier
-                .fillMaxWidth(0.84f)
+                .fillMaxWidth(if (mine) 0.86f else 0.96f)
                 .clip(RoundedCornerShape(25.dp, 25.dp, if (mine) 8.dp else 25.dp, if (mine) 25.dp else 8.dp))
                 .background(
                     if (mine) Brush.linearGradient(listOf(ArcticBlue, AuroraViolet))
@@ -797,7 +747,9 @@ private fun ChatBubble(message: ChatMessage) {
                 )
                 .padding(horizontal = 16.dp, vertical = 13.dp),
         ) {
-            Text(message.content, style = MaterialTheme.typography.bodyLarge, color = if (mine) Color.White else MaterialTheme.colorScheme.onSurface)
+            SelectionContainer {
+                Text(readableCoachText(message.content), style = MaterialTheme.typography.bodyLarge, color = if (mine) Color.White else MaterialTheme.colorScheme.onSurface)
+            }
         }
     }
 }
@@ -815,22 +767,24 @@ private fun ChatComposer(value: String, onValueChange: (String) -> Unit, onSend:
                 value = value,
                 onValueChange = onValueChange,
                 enabled = enabled,
-                modifier = Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 10.dp),
+                modifier = Modifier.weight(1f).heightIn(max = 160.dp).padding(horizontal = 12.dp, vertical = 10.dp),
+                maxLines = 5,
                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                 decorationBox = { inner ->
-                    if (value.isBlank()) Text(tr("比如：我今天适合跑 10km 吗？"), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f), style = MaterialTheme.typography.bodyLarge)
+                    if (value.isBlank()) Text(tr("问问你的身体"), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyLarge)
                     inner()
                 },
             )
             Box(
                 modifier = Modifier
-                    .size(46.dp)
+                    .size(48.dp)
+                    .graphicsLayer { alpha = if (enabled && value.isNotBlank()) 1f else 0.35f }
                     .clip(CircleShape)
                     .background(Brush.linearGradient(listOf(AuroraViolet, ArcticBlue)))
                     .clickable(enabled = enabled && value.isNotBlank(), onClick = onSend),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Rounded.Send, contentDescription = tr("发送"), tint = Color.White, modifier = Modifier.size(20.dp))
+                Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = tr("发送"), tint = Color.White, modifier = Modifier.size(20.dp))
             }
         }
     }
@@ -840,7 +794,7 @@ private fun ChatComposer(value: String, onValueChange: (String) -> Unit, onSend:
 @Composable
 private fun SettingsSheet(state: JingYouUiState, viewModel: JingYouViewModel) {
     ModalBottomSheet(onDismissRequest = { viewModel.setSettingsOpen(false) }, containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f)) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 36.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 36.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.Tune, contentDescription = null, tint = AuroraViolet)
                 Spacer(Modifier.width(9.dp))
@@ -874,6 +828,15 @@ private fun SettingsSheet(state: JingYouUiState, viewModel: JingYouViewModel) {
                     }
                 }
             }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(tr("旅行氛围"), style = MaterialTheme.typography.titleMedium)
+                    Text(tr("蓝瓷与玻璃"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                val travelLabel = tr("旅行氛围")
+                Switch(state.travelAtmosphere, viewModel::setTravelAtmosphere, modifier = Modifier.semantics { contentDescription = travelLabel })
+            }
+            TextButton(onClick = viewModel::logout) { Text(tr("退出登录")) }
         }
     }
 }
@@ -892,20 +855,50 @@ private fun SettingSection(icon: androidx.compose.ui.graphics.vector.ImageVector
 
 @Composable
 private fun ChoiceChip(text: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val bg = if (selected) Brush.linearGradient(listOf(AuroraViolet, ArcticBlue)) else Brush.linearGradient(listOf(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f), MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)))
-    Box(
-        modifier = modifier.clip(RoundedCornerShape(18.dp)).background(bg).clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 12.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(text, style = MaterialTheme.typography.labelLarge, color = if (selected) Color.White else MaterialTheme.colorScheme.onSurface)
-    }
+    InsightChoice(text, selected, modifier, onClick)
 }
 
 @Composable
-private fun GlassIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) {
+private fun GlassIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, enabled: Boolean = true, onClick: () -> Unit) {
     GlassPanel(shape = RoundedCornerShape(999.dp), padding = PaddingValues(0.dp), accent = AuroraViolet) {
-        Box(Modifier.size(44.dp).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(48.dp).graphicsLayer { alpha = if (enabled) 1f else 0.4f }.clickable(enabled = enabled, role = Role.Button, onClick = onClick), contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = description, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+private fun readableCoachText(source: String) = buildAnnotatedString {
+    val cleaned = source.replace(Regex("(?m)^#{1,6}\\s+"), "").replace(Regex("(?m)^[-*]\\s+"), "• ")
+    var start = 0
+    Regex("\\*\\*(.+?)\\*\\*").findAll(cleaned).forEach { match ->
+        append(cleaned.substring(start, match.range.first))
+        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(match.groupValues[1]) }
+        start = match.range.last + 1
+    }
+    append(cleaned.substring(start))
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ActivityDetailSheet(activity: ActivitySummary, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            Text(tr("运动详情"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Text(activity.name.ifBlank { activity.type }, style = MaterialTheme.typography.headlineMedium)
+            Text(activity.startTime?.take(16)?.replace('T', ' ') ?: "—", style = MaterialTheme.typography.bodyMedium)
+            listOf(
+                Triple("公里", activity.distanceM?.div(1000), "km"),
+                Triple("分钟", activity.durationS?.div(60), tr("分钟")),
+                Triple("平均心率", activity.avgHr, "bpm"),
+                Triple("最高心率", activity.maxHr, "bpm"),
+                Triple("训练负荷", activity.trainingLoad, ""),
+                Triple("训练效果", activity.trainingEffect, ""),
+                Triple("热量", activity.calories, "kcal"),
+            ).forEach { (label, value, unit) ->
+                SignalRow(tr(label), value?.let { "%.1f %s".format(it, unit) } ?: "—", ArcticBlue)
+            }
+            Text(tr("数据由 Garmin 提供"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(16.dp))
         }
     }
 }

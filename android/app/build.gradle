@@ -31,7 +31,11 @@ android {
         buildConfig true
     }
 
+    // Optional personal photographs stay outside the public source tree.
+    sourceSets.main.assets.srcDir rootProject.file('../.local/private-assets')
+
     compileOptions {
+        coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
@@ -49,6 +53,8 @@ android {
 }
 
 dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+    testImplementation 'junit:junit:4.13.2'
     def composeBom = platform('androidx.compose:compose-bom:2026.04.01')
     implementation composeBom
     androidTestImplementation composeBom

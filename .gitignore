@@ -5,7 +5,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 # Local health data and exports must never be committed.
-data/
+/data/
 exports/
 .local/
 # Garmin auth tokens live under ignored per-user data directories.
@@ -26,3 +26,5 @@ android/.kotlin/
 android/local.properties
 android/**/build/
 *.apk
+# Private travel photographs are supplied locally to the Android asset source set.
+android/app/src/main/assets/travel/

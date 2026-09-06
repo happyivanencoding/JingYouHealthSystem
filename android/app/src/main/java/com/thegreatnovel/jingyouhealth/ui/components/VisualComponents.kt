@@ -24,11 +24,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Home
@@ -56,6 +59,9 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -74,7 +80,6 @@ import com.thegreatnovel.jingyouhealth.ui.theme.GlassDark
 import com.thegreatnovel.jingyouhealth.ui.theme.GlassLight
 import com.thegreatnovel.jingyouhealth.ui.theme.LocalJingYouDarkTheme
 import com.thegreatnovel.jingyouhealth.ui.theme.Mist
-import com.thegreatnovel.jingyouhealth.ui.theme.MistBlue
 import com.thegreatnovel.jingyouhealth.ui.theme.NightBlue
 import com.thegreatnovel.jingyouhealth.ui.theme.Rose
 import com.thegreatnovel.jingyouhealth.ui.theme.Void
@@ -97,8 +102,11 @@ fun DynamicAmbientBackdrop(
     energy: Float = 0.7f,
     stress: Float? = null,
     sleepScore: Float? = null,
+    photoEnabled: Boolean = true,
+    photoReveal: Float = 0f,
 ) {
     val dark = LocalJingYouDarkTheme.current
+    val reveal = photoReveal.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
     val recovery = energy.coerceIn(0f, 1f)
     val stressLevel = ((stress ?: 26f) / 100f).coerceIn(0f, 1f)
     val sleep = ((sleepScore ?: (recovery * 100f)) / 100f).coerceIn(0f, 1f)
@@ -133,59 +141,67 @@ fun DynamicAmbientBackdrop(
         label = "glow",
     )
 
-    Canvas(modifier = modifier) {
-        drawRect(
-            brush = Brush.verticalGradient(
-                if (dark) {
-                    listOf(Void, Color(0xFF111728), NightBlue, Void)
-                } else {
-                    listOf(
-                        Color(0xFFEFF3FA),
-                        Color(0xFFF5F2FA),
-                        Color(0xFFEAF3F4),
-                    )
-                },
-            ),
-        )
-        val radius = maxOf(size.width, size.height)
-        val alpha = if (dark) {
-            (0.19f + recovery * 0.11f) * glow
-        } else {
-            (0.18f + recovery * 0.10f) * glow
-        }
+    val backdropTop by animateColorAsState(if (dark) Void else Mist, tween(450), label = "backdrop-top")
+    val backdropMiddle by animateColorAsState(if (dark) Color(0xFF162130) else Color(0xFFF1F0F4), tween(450), label = "backdrop-middle")
+    val backdropBottom by animateColorAsState(if (dark) NightBlue else Color(0xFFEBF1EF), tween(450), label = "backdrop-bottom")
+    Box(modifier = modifier) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            drawRect(
+                brush = Brush.verticalGradient(
+                    listOf(backdropTop, backdropMiddle, backdropBottom),
+                ),
+            )
+            val radius = maxOf(size.width, size.height)
+            val alpha = if (dark) {
+                (0.19f + recovery * 0.11f) * glow
+            } else {
+                (0.18f + recovery * 0.10f) * glow
+            }
 
-        val p1 = Offset(size.width * (0.88f + driftX), size.height * (0.08f + driftY))
-        drawCircle(
-            brush = Brush.radialGradient(
-                listOf(c1.copy(alpha = alpha), c1.copy(alpha = alpha * 0.22f), Color.Transparent),
-                center = p1,
+            val p1 = Offset(size.width * (0.88f + driftX), size.height * (0.08f + driftY))
+            drawCircle(
+                brush = Brush.radialGradient(
+                    listOf(c1.copy(alpha = alpha), c1.copy(alpha = alpha * 0.22f), Color.Transparent),
+                    center = p1,
+                    radius = radius * 0.56f,
+                ),
                 radius = radius * 0.56f,
-            ),
-            radius = radius * 0.56f,
-            center = p1,
-        )
+                center = p1,
+            )
 
-        val p2 = Offset(size.width * (0.02f - driftX), size.height * (0.52f - driftY))
-        drawCircle(
-            brush = Brush.radialGradient(
-                listOf(c2.copy(alpha = alpha * 0.88f), c2.copy(alpha = alpha * 0.10f), Color.Transparent),
-                center = p2,
+            val p2 = Offset(size.width * (0.02f - driftX), size.height * (0.52f - driftY))
+            drawCircle(
+                brush = Brush.radialGradient(
+                    listOf(c2.copy(alpha = alpha * 0.88f), c2.copy(alpha = alpha * 0.10f), Color.Transparent),
+                    center = p2,
+                    radius = radius * 0.62f,
+                ),
                 radius = radius * 0.62f,
-            ),
-            radius = radius * 0.62f,
-            center = p2,
-        )
+                center = p2,
+            )
 
-        val warmAlpha = (0.055f + stressLevel * 0.10f) * glow
-        val p3 = Offset(size.width * 0.74f, size.height * (0.88f + driftY))
-        drawCircle(
-            brush = Brush.radialGradient(
-                listOf(c3.copy(alpha = warmAlpha), c3.copy(alpha = warmAlpha * 0.12f), Color.Transparent),
-                center = p3,
+            val warmAlpha = (0.055f + stressLevel * 0.10f) * glow
+            val p3 = Offset(size.width * 0.74f, size.height * (0.88f + driftY))
+            drawCircle(
+                brush = Brush.radialGradient(
+                    listOf(c3.copy(alpha = warmAlpha), c3.copy(alpha = warmAlpha * 0.12f), Color.Transparent),
+                    center = p3,
+                    radius = radius * 0.48f,
+                ),
                 radius = radius * 0.48f,
-            ),
-            radius = radius * 0.48f,
-            center = p3,
+                center = p3,
+            )
+        }
+        TravelAtmosphere(
+            modifier = Modifier.fillMaxWidth().height((420f + 140f * reveal).dp).align(Alignment.TopCenter),
+            enabled = photoEnabled,
+            reveal = reveal,
+            strength = when (tab) {
+                RootTab.TODAY -> 1f
+                RootTab.TRENDS -> 0.72f
+                RootTab.ACTIVITIES -> 0.56f
+                RootTab.COACH -> 0.40f
+            },
         )
     }
 }
@@ -199,10 +215,10 @@ fun GlassPanel(
     content: @Composable () -> Unit,
 ) {
     val dark = LocalJingYouDarkTheme.current
-    val top = if (dark) GlassDark.copy(alpha = 0.44f) else GlassLight.copy(alpha = 0.52f)
-    val bottom = if (dark) NightBlue.copy(alpha = 0.22f) else Ceramic.copy(alpha = 0.28f)
-    val borderStart = if (dark) GlassBorderDark.copy(alpha = 0.10f) else GlassBorderLight.copy(alpha = 0.38f)
-    val borderEnd = if (dark) Color.White.copy(alpha = 0.012f) else Graphite.copy(alpha = 0.022f)
+    val top by animateColorAsState(if (dark) GlassDark.copy(alpha = 0.56f) else GlassLight.copy(alpha = 0.64f), tween(450), label = "glass-top")
+    val bottom by animateColorAsState(if (dark) NightBlue.copy(alpha = 0.34f) else Ceramic.copy(alpha = 0.40f), tween(450), label = "glass-bottom")
+    val borderStart by animateColorAsState(if (dark) GlassBorderDark.copy(alpha = 0.13f) else GlassBorderLight.copy(alpha = 0.58f), tween(450), label = "glass-edge")
+    val borderEnd = if (dark) Color.White.copy(alpha = 0.025f) else Graphite.copy(alpha = 0.038f)
     val accentOverlay = accent?.copy(alpha = if (dark) 0.105f else 0.065f) ?: Color.Transparent
 
     Box(
@@ -242,7 +258,8 @@ fun PressableGlassPanel(
         GlassPanel(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(interactionSource = interaction, indication = null) {
+                .heightIn(min = 48.dp)
+                .clickable(interactionSource = interaction, indication = null, role = Role.Button) {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     onClick()
                 },
@@ -315,19 +332,26 @@ fun Sparkline(
     values: List<Float?>,
     modifier: Modifier = Modifier,
     accent: Color = MaterialTheme.colorScheme.primary,
+    domain: ClosedFloatingPointRange<Float>? = null,
 ) {
-    val valid = values.mapIndexedNotNull { index, value -> value?.let { index to it } }
+    val valid = values.mapIndexedNotNull { index, value -> value?.takeIf { it.isFinite() }?.let { index to it } }
     Canvas(modifier = modifier) {
-        if (valid.size < 2) return@Canvas
-        val min = valid.minOf { it.second }
-        val max = valid.maxOf { it.second }
-        val spread = (max - min).takeIf { it > 0.001f } ?: 1f
+        if (valid.isEmpty()) return@Canvas
+        val min = minOf(valid.minOf { it.second }, domain?.start ?: Float.POSITIVE_INFINITY)
+        val max = maxOf(valid.maxOf { it.second }, domain?.endInclusive ?: Float.NEGATIVE_INFINITY)
+        val spread = max - min
         val path = Path()
-        valid.forEachIndexed { i, pair ->
-            val x = if (values.size <= 1) 0f else size.width * pair.first / (values.size - 1f)
-            val normalized = (pair.second - min) / spread
-            val y = size.height * (0.88f - normalized * 0.72f)
-            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        val inset = 2.dp.toPx()
+        val width = (size.width - inset * 2).coerceAtLeast(0f)
+        valid.forEachIndexed { i, (index, value) ->
+            val x = if (values.size <= 1) size.width / 2f else inset + width * index / (values.size - 1f)
+            // A constant series sits centrally, rather than looking like a low score.
+            val normalized = if (spread > 0.001f) (value - min) / spread else 0.5f
+            val y = size.height * (0.86f - normalized * 0.72f)
+            val hasPrevious = i > 0 && valid[i - 1].first == index - 1
+            val hasNext = i < valid.lastIndex && valid[i + 1].first == index + 1
+            if (hasPrevious) path.lineTo(x, y) else path.moveTo(x, y)
+            if (!hasPrevious && !hasNext) drawCircle(accent, 2.dp.toPx(), Offset(x, y))
         }
         drawPath(path, brush = Brush.horizontalGradient(listOf(accent.copy(alpha = 0.55f), accent, ElectricCyan)), style = Stroke(3.dp.toPx(), cap = StrokeCap.Round))
     }
@@ -380,7 +404,7 @@ fun FloatingHealthDock(
             .padding(3.dp),
     ) {
         Row(
-            Modifier.fillMaxWidth(),
+            Modifier.fillMaxWidth().selectableGroup(),
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
             items.forEach { (tab, icon, label) ->
@@ -410,7 +434,7 @@ private fun DockItem(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val iconColor by animateColorAsState(
-        if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
         tween(220),
         label = "dock-icon",
     )
@@ -435,11 +459,19 @@ private fun DockItem(
     )
     Box(
         modifier = modifier
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(24.dp))
-            .clickable(interactionSource = interaction, indication = null) {
-                if (!selected) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onClick()
-            }
+            .selectable(
+                selected = selected,
+                role = Role.Tab,
+                interactionSource = interaction,
+                indication = null,
+                onClick = {
+                    if (!selected) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onClick()
+                },
+            )
+            .semantics { contentDescription = label }
             .padding(vertical = 2.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -457,7 +489,7 @@ private fun DockItem(
                     if (selected) {
                         Brush.horizontalGradient(
                             listOf(
-                                AuroraViolet.copy(alpha = 0.18f + 0.07f * halo),
+                                accent.copy(alpha = 0.15f + 0.05f * halo),
                                 ArcticBlue.copy(alpha = 0.13f + 0.06f * halo),
                             ),
                         )
@@ -467,7 +499,7 @@ private fun DockItem(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = label, tint = iconColor, modifier = Modifier.size(23.dp))
+            Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(23.dp))
         }
     }
 }
@@ -503,6 +535,7 @@ fun TypingBubble(
 
 @Composable
 fun StatusPill(text: String, color: Color, modifier: Modifier = Modifier) {
+    val foreground = if (LocalJingYouDarkTheme.current) color else lerp(color, Graphite, 0.42f)
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(999.dp))
@@ -510,7 +543,7 @@ fun StatusPill(text: String, color: Color, modifier: Modifier = Modifier) {
             .border(1.dp, color.copy(alpha = 0.16f), RoundedCornerShape(999.dp))
             .padding(horizontal = 11.dp, vertical = 7.dp),
     ) {
-        Text(text, style = MaterialTheme.typography.labelMedium, color = color, fontSize = 11.sp)
+        Text(text, style = MaterialTheme.typography.labelMedium, color = foreground, fontSize = 11.sp)
     }
 }
 
