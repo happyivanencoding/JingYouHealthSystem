@@ -79,6 +79,36 @@ class TrainingHistoryTests(unittest.TestCase):
         self.assertIsNone(point["all"]["reference_weekly"])
         self.assertEqual(point["all"]["recorded_7"], 10.0)
 
+    def test_partial_activity_day_cannot_restore_full_coverage(self) -> None:
+        # A capped recent list can contain a row from an incomplete oldest day.
+        activities = [self._activity(self.anchor - timedelta(days=6), "strength", 60)]
+        coverage = {self.anchor - timedelta(days=offset) for offset in range(6)}
+        history = compute_training_load_history(activities, coverage, end_date=self.anchor, days=28)
+        point = next(item for item in history["points"] if item["date"] == self.anchor.isoformat())
+        self.assertEqual(point["coverage_7"], 6)
+        self.assertIsNone(point["all"]["load_7"])
+        self.assertEqual(point["all"]["recorded_7"], 60)
+        rhythm = compute_training_status([], [], [], activities, None, self.anchor, activity_coverage_dates=coverage)
+        self.assertEqual(rhythm["acute"]["coverage_days"], 6)
+        self.assertEqual(rhythm["acute"]["total_au"], 60)
+        self.assertIsNone(rhythm["relative_ratio"])
+        unverified = compute_training_load_history(activities, [], end_date=self.anchor, days=28)["points"][0]
+        self.assertEqual(unverified["coverage_7"], 0)
+        self.assertEqual(unverified["all"]["recorded_7"], 60)
+
+    def test_reference_scaling_excludes_unverified_day_load(self) -> None:
+        partial_day = self.anchor - timedelta(days=10)
+        coverage = {self.anchor - timedelta(days=offset) for offset in range(56)} - {partial_day}
+        activities = [self._activity(partial_day, "strength", 900),
+                      self._activity(self.anchor - timedelta(days=9), "strength", 90)]
+        point = compute_training_load_history(activities, coverage, end_date=self.anchor, days=28)["points"][-1]
+        self.assertAlmostEqual(point["all"]["reference_weekly"], 90 / 27 * 7)
+        self.assertEqual(point["all"]["recorded_28"], 990)
+        self.assertIsNone(point["all"]["load_28"])
+        rhythm = compute_training_status([], [], [], activities, None, self.anchor, activity_coverage_dates=coverage)
+        self.assertEqual(rhythm["reference"]["coverage_days"], 27)
+        self.assertAlmostEqual(rhythm["reference"]["weekly_equivalent_au"], point["all"]["reference_weekly"])
+
     def test_trends_training_history_is_opt_in(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             user = UserContext("training-history", "Training", "OWNER", "training@test")

@@ -26,18 +26,19 @@ def _empty_metric() -> dict[str, float | None]:
 
 def _metric(
     prefix: list[float],
+    covered_prefix: list[float],
     index: dict[date, int],
     day: date,
     coverage_prefix: list[int],
 ) -> dict[str, float | None]:
-    def total(first: date, last: date) -> float:
+    def total(metric_prefix: list[float], first: date, last: date) -> float:
         if first > last:
             return 0.0
         end_index = index.get(last)
         before_index = index.get(first - timedelta(days=1))
         if end_index is None:
             return 0.0
-        return prefix[end_index + 1] - (prefix[before_index + 1] if before_index is not None else 0.0)
+        return metric_prefix[end_index + 1] - (metric_prefix[before_index + 1] if before_index is not None else 0.0)
 
     def covered(first: date, last: date) -> int:
         end_index = index.get(last)
@@ -46,10 +47,10 @@ def _metric(
             return 0
         return coverage_prefix[end_index + 1] - (coverage_prefix[before_index + 1] if before_index is not None else 0)
 
-    current7 = total(day - timedelta(days=6), day)
-    current28 = total(day - timedelta(days=27), day)
-    reference = total(day - timedelta(days=34), day - timedelta(days=7))
-    reference28 = total(day - timedelta(days=55), day - timedelta(days=28))
+    current7 = total(prefix, day - timedelta(days=6), day)
+    current28 = total(prefix, day - timedelta(days=27), day)
+    reference = total(covered_prefix, day - timedelta(days=34), day - timedelta(days=7))
+    reference28 = total(covered_prefix, day - timedelta(days=55), day - timedelta(days=28))
     covered7 = covered(day - timedelta(days=6), day)
     covered28 = covered(day - timedelta(days=27), day)
     covered_ref = covered(day - timedelta(days=34), day - timedelta(days=7))
@@ -91,14 +92,14 @@ def compute_training_load_history(
         parsed
         for value in (activity_coverage_dates or [])
         if (parsed := _day(value)) is not None and (end is None or parsed <= end)
-    } | actual_dates
+    }
     if end is None:
-        end = max(known_coverage, default=None)
-    if end is None or not known_coverage:
+        end = max(known_coverage | actual_dates, default=None)
+    if end is None or not (known_coverage or actual_dates):
         return {"methodology_version": METHODOLOGY_VERSION, "points": []}
-    first_known = min(known_coverage)
-    output_start = max(end - timedelta(days=days - 1), first_known)
-    output_dates = sorted(day for day in known_coverage if output_start <= day <= end)
+    first_output = min(known_coverage | actual_dates)
+    output_start = max(end - timedelta(days=days - 1), first_output)
+    output_dates = sorted(day for day in (known_coverage | actual_dates) if output_start <= day <= end)
     if not output_dates:
         return {"methodology_version": METHODOLOGY_VERSION, "points": []}
 
@@ -106,13 +107,18 @@ def compute_training_load_history(
     prefix_dates = _calendar(input_start, end)
     index = {day: position for position, day in enumerate(prefix_dates)}
     all_daily = defaultdict(float)
+    covered_all_daily = defaultdict(float)
     category_daily = {category: defaultdict(float) for category in CATEGORIES}
+    covered_category_daily = {category: defaultdict(float) for category in CATEGORIES}
     for row in normalized:
         if row["day"] < input_start or row["day"] > end or row["load"] is None:
             continue
         all_daily[row["day"]] += row["load"]
         category = row["category"] if row["category"] in category_daily else "easy_aerobic"
         category_daily[category][row["day"]] += row["load"]
+        if row["day"] in known_coverage:
+            covered_all_daily[row["day"]] += row["load"]
+            covered_category_daily[category][row["day"]] += row["load"]
 
     def prefix(values: Mapping[date, float]) -> list[float]:
         result = [0.0]
@@ -121,7 +127,9 @@ def compute_training_load_history(
         return result
 
     all_prefix = prefix(all_daily)
+    covered_all_prefix = prefix(covered_all_daily)
     category_prefix = {category: prefix(values) for category, values in category_daily.items()}
+    covered_category_prefix = {category: prefix(values) for category, values in covered_category_daily.items()}
     coverage_prefix = [0.0]
     for day in prefix_dates:
         coverage_prefix.append(coverage_prefix[-1] + (1 if day in known_coverage else 0))
@@ -136,9 +144,9 @@ def compute_training_load_history(
 
         coverage7 = covered(day - timedelta(days=6), day)
         coverage28 = covered(day - timedelta(days=27), day)
-        all_metric = _metric(all_prefix, index, day, coverage_prefix)
+        all_metric = _metric(all_prefix, covered_all_prefix, index, day, coverage_prefix)
         categories = {
-            category: _metric(category_prefix[category], index, day, coverage_prefix)
+            category: _metric(category_prefix[category], covered_category_prefix[category], index, day, coverage_prefix)
             for category in CATEGORIES
         }
         points.append(

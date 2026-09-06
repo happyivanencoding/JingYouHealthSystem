@@ -323,25 +323,24 @@ def compute_training_status(
 
     actual_activity_dates = {row["day"] for row in activities}
     if activity_coverage_dates is None:
-        # No sync metadata means we know only the dates with actual activity
-        # rows.  Wellness rows must not prove that an activity day was checked.
-        known_activity_dates = actual_activity_dates
+        # No sync metadata means no activity-list date is known to be complete.
+        known_activity_dates = set()
     else:
         known_activity_dates = {
             parsed
             for value in activity_coverage_dates
             if (parsed := _day(value)) is not None and parsed <= target
-        } | actual_activity_dates
+        }
     observed_short = {day for day in known_activity_dates if short_start <= day <= target}
     observed_long = {day for day in known_activity_dates if long_start <= day <= target}
     observed_ref = {day for day in known_activity_dates if ref_start <= day <= ref_end}
     observed_chronic_ref = {day for day in known_activity_dates if chronic_ref_start <= day <= chronic_ref_end}
-    ref_rows = [row for row in activities if ref_start <= row["day"] <= ref_end and row.get("load") is not None]
+    ref_rows = [row for row in activities if row["day"] in observed_ref and row.get("load") is not None]
     ref_au = sum(row["load"] for row in ref_rows)
     ref_weekly = (ref_au / len(observed_ref) * 7.0) if observed_ref else None
     ref_complete = len(observed_ref) >= 24
     chronic_ref_complete = len(observed_chronic_ref) >= 24
-    chronic_ref_rows = [row for row in activities if chronic_ref_start <= row["day"] <= chronic_ref_end and row.get("load") is not None]
+    chronic_ref_rows = [row for row in activities if row["day"] in observed_chronic_ref and row.get("load") is not None]
     chronic_ref_au = sum(row["load"] for row in chronic_ref_rows)
     chronic_ref_equivalent = (chronic_ref_au / len(observed_chronic_ref) * 28.0) if observed_chronic_ref else None
     short_complete = len(observed_short) >= 7

@@ -24,7 +24,7 @@ reference28AU = recordedEarlier28AU / coveredEarlier28Days × 28
 relative28Load = recordedRecent28AU / reference28AU
 ```
 
-The current comparison window must have complete activity-sync coverage (7/7 or 28/28); each earlier reference requires at least 24 of its 28 days. Coverage comes from successful activity-history sync ranges and confirmed recent-list refreshes. Wellness dates alone do not prove activity coverage. A capped recent list excludes its oldest returned day because that day could be partial. The reference identifies when it was scaled from 24–27 covered days. Unknown dates are not filled as rest days.
+The current comparison window must have complete activity-sync coverage (7/7 or 28/28); each earlier reference requires at least 24 of its 28 days. Coverage comes from successful activity-history sync ranges and confirmed recent-list refreshes. Neither wellness dates nor the presence of an activity row proves a whole day's activity coverage. A capped recent list excludes its oldest returned day because that day could be partial. Reference scaling uses only loads on verified covered dates and identifies when it was scaled from 24–27 covered days. Partial-day activities still contribute to recorded totals. Unknown dates are not filled as rest days.
 
 Recorded totals remain visible when coverage is insufficient; a comparative trend is withheld. A zero reference is labeled **building**, with no ratio division. Above 1.25 is **rising**, below 0.75 is **lighter**, otherwise **usual**. These describe recorded habits and are not a physiological safe zone.
 
