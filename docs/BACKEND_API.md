@@ -191,6 +191,8 @@ JINGYOU_COACH_REASONING
 
 The current `/answer` endpoint is a blocking HTTP request. Android can show local typing/status animation while waiting. The Windows ACP runner writes the authoritative answer to a UTF-8 file; backend subprocess stdout/stderr are captured as raw bytes so localized PowerShell output cannot fail the request during decoding. True token/event streaming can be added later if the frontend requires it.
 
+Coach output language is locked to the **latest user question only**. Earlier conversation history, Android UI language, profile/display names, and health-data labels must not influence the reply language. The agent must answer entirely in the same language as the current question, except for unavoidable proper nouns, standard units, abbreviations, or quoted text. This behavior has been smoke-tested with Chinese, English, French, and Arabic prompts against the real ACP Coach path.
+
 ## Current backend status
 
 Completed:
@@ -213,8 +215,7 @@ Completed:
 
 Remaining integration / optional work:
 
-- Frontend production wiring: the current Android code already accepts the `jingyouhealth://auth?token=...` deep link, but its current build config still points API traffic at `http://127.0.0.1:8788` and its connect action still calls the USB dev-login route. The frontend owner must add a production base URL (`https://health.thegreatnovel.com`) and launch `/api/mobile-auth/bridge` in the system browser instead of changing backend auth.
-- After that wiring, perform the first interactive production login for each private account and verify the full `Cloudflare identity -> /api/mobile-auth/bridge -> JingYou session -> /api/me` round trip. This requires the human user's IdP/OTP interaction and cannot be completed by an unauthenticated backend probe.
+- Production Android wiring and the OWNER interactive Cloudflare login round trip have been verified. The remaining auth smoke is to perform the same first interactive login once with the MEMBER account and confirm it resolves to that account's `/api/me`, dashboard, refresh, and Coach history.
 
 
 - Optionally add true streaming Coach events if the frontend wants backend-driven phase updates rather than local status animation.

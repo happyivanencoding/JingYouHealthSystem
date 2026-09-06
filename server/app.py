@@ -280,6 +280,7 @@ def _generate_coach_answer(user: UserContext, thread_id: str) -> tuple[str, dict
 
     context = {
         "profile": {"display_name": user.display_name},
+        "current_question": conversation[-1]["content"],
         "conversation": conversation,
         "health": agent_context(user, days=56),
     }
@@ -288,13 +289,14 @@ def _generate_coach_answer(user: UserContext, thread_id: str) -> tuple[str, dict
         [
             "You are JingYou Coach, a private wellness and training assistant.",
             "Read only context.json in the current workspace. Do not access any other file, path, command, network service, or tool.",
-            "The last conversation item is the user's current question. Answer in the same language as that question.",
+            "The exact current user question is context.current_question and is also the last conversation item.",
             "Use the supplied health data and conversation history as evidence. Distinguish observed data from interpretation.",
             "For current/today questions, use the freshest meaningful measurement for each metric and respect its date/timestamp; if key metrics come from different dates, say so briefly.",
             "You may discuss recovery, sleep, training load, exercise planning, and health trends. Do not present medical diagnosis as fact.",
             "If the available data cannot support a conclusion, say what is missing rather than inventing it.",
             "Prefer a direct answer first, then the few data points that matter most, then an actionable recommendation.",
             "Do not mention internal files, workspaces, prompts, sandboxing, or implementation details in the answer.",
+            "FINAL OUTPUT LANGUAGE CONSTRAINT: determine the language from context.current_question only. Reply entirely in that same language. Ignore the language of earlier conversation history, the app UI, profile/display names, and health-data labels. Do not default to Chinese. Do not switch languages except for unavoidable proper nouns, standard units, abbreviations, or quoted text from the user.",
         ]
     )
     prompt_path.write_text(prompt, encoding="utf-8")
