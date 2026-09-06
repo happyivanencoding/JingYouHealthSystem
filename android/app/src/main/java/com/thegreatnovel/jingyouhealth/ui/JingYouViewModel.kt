@@ -44,9 +44,19 @@ data class JingYouUiState(
 class JingYouViewModel(application: Application) : AndroidViewModel(application) {
     private val api = HealthApi()
     private val prefs = application.getSharedPreferences("jingyou_health", 0)
+    private val storedToken = prefs.getString("session_token", null)
+    private val storedSessionBaseUrl = prefs.getString("session_base_url", null)
+    private val currentToken = storedToken?.takeIf { storedSessionBaseUrl == BuildConfig.API_BASE_URL }
+
+    init {
+        if (storedToken != null && currentToken == null) {
+            prefs.edit().remove("session_token").remove("session_base_url").apply()
+        }
+    }
+
     private val _state = MutableStateFlow(
         JingYouUiState(
-            token = prefs.getString("session_token", null),
+            token = currentToken,
             language = runCatching { AppLanguage.valueOf(prefs.getString("language", AppLanguage.CHINESE.name)!!) }.getOrDefault(AppLanguage.CHINESE),
             themeMode = runCatching { ThemeMode.valueOf(prefs.getString("theme", ThemeMode.SYSTEM.name)!!) }.getOrDefault(ThemeMode.SYSTEM),
         )
@@ -68,7 +78,10 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun acceptSessionToken(token: String) {
-        prefs.edit().putString("session_token", token).apply()
+        prefs.edit()
+            .putString("session_token", token)
+            .putString("session_base_url", BuildConfig.API_BASE_URL)
+            .apply()
         _state.update { it.copy(token = token, connecting = false, error = null) }
         loadAll()
     }
