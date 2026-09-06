@@ -18,9 +18,9 @@ Each session uses `minutes × effective RPE` in AU. Reported RPE is preferred. M
 The 7-day reference window is `[D-34,D-7]`; the latest week does not appear again in its own comparison. The 28-day reference uses the separate preceding 28 days `[D-55,D-28]`, without overlap with the current 28-day window:
 
 ```text
-referenceWeeklyAU = recordedPrior28AU / coveredPrior28Days × 7
+referenceWeeklyAU = coveredPrior28AU / coveredPrior28Days × 7
 relativeLoad = recordedRecent7AU / referenceWeeklyAU
-reference28AU = recordedEarlier28AU / coveredEarlier28Days × 28
+reference28AU = coveredEarlier28AU / coveredEarlier28Days × 28
 relative28Load = recordedRecent28AU / reference28AU
 ```
 
@@ -47,3 +47,7 @@ Activities switches between daily AU bars, rolling 7-day totals and rolling 28-d
 Home gives each load its reference band, current-value marker and below/close/above-reference label. The pale band is the initial 75–125% descriptive comparison band, not a safety or optimal-training zone. The Home method sheet exposes formulas, coverage, goals, daily feeling and research links. The same backend result is available to Coach, so an explanation uses the same numbers and dated planning rules without forcing a full recap into every response.
 
 Research, assumptions and limits are recorded in [the research notes](JINGYOU_METHOD_RESEARCH.md). The rationale includes [session-RPE](https://pubmed.ncbi.nlm.nih.gov/11708692/), [subjective monitoring](https://pubmed.ncbi.nlm.nih.gov/26423706/), [workload-ratio limitations](https://pubmed.ncbi.nlm.nih.gov/32502973/) and [the ECSS/ACSM overtraining consensus](https://pubmed.ncbi.nlm.nih.gov/23247672/).
+
+## Delivery verification — 2026-09-06
+
+Implemented in `5ad4246`, with the partial-day coverage correction in `2f842db`. Validation completed: 61 Android JVM tests, 40 backend tests, and a successful debug APK build. The same APK was installed and its hash checked on both Android devices; Home bands, rolling 7/28-day views, four-week dragging, calendar selection and activity details were checked in each account. English date labels and duration/button wrapping were checked on-device. The backend correction was deployed and local/public health checks returned 200. Detailed private device evidence and deployment records remain in the local handoff.

@@ -138,16 +138,16 @@ Training status uses `methodology_version="jingyou-rhythm-v1"` and is included i
     "goal": "balanced",
     "feeling": null,
     "load_trend": "usual",
-    "relative_ratio": 1.17,
-    "chronic_relative_ratio": 1.17,
+    "relative_ratio": 1.0,
+    "chronic_relative_ratio": 1.125,
     "chronic_trend": "usual",
     "confidence": "recorded",
     "mode": "balanced",
     "focus": "strength",
     "intensity": "balanced",
     "reasons": ["goal_strength_gap"],
-    "acute": {"total_au": 420.0, "active_days": 2, "coverage_days": 7, "window_days": 7},
-    "chronic": {"total_au": 1260.0, "active_days": 7, "coverage_days": 25, "window_days": 28},
+    "acute": {"total_au": 280.0, "active_days": 2, "coverage_days": 7, "window_days": 7},
+    "chronic": {"total_au": 1260.0, "active_days": 7, "coverage_days": 28, "window_days": 28},
     "reference": {
       "total_au": 1080.0,
       "coverage_days": 27,
@@ -174,7 +174,7 @@ Training status uses `methodology_version="jingyou-rhythm-v1"` and is included i
 }
 ```
 
-The backend also returns the complete category breakdown and method metadata. `acute` is `[D-6,D]`, `chronic` is `[D-27,D]`, the short-term reference is `[D-34,D-7]`, and the independent chronic reference is `[D-55,D-28]`. The short reference is a weekly equivalent; the chronic reference is a 28-day equivalent. Unknown dates are excluded rather than treated as zero. Relative ratios and `rising`/`lighter`/`usual` trends require all 7 observed short-term days and at least 24 observed reference days; chronic comparison also requires complete 28-day current coverage and at least 24 chronic-reference days. Recorded totals and coverage remain available when those thresholds are not met, with `trend="insufficient"`; a zero reference is labeled `building` instead of producing a ratio. Activity coverage comes from completed activity sync/refresh metadata and actual activity dates; wellness dates alone do not prove activity-list coverage.
+The backend also returns the complete category breakdown and method metadata. `acute` is `[D-6,D]`, `chronic` is `[D-27,D]`, the short-term reference is `[D-34,D-7]`, and the independent chronic reference is `[D-55,D-28]`. The short reference is a weekly equivalent; the chronic reference is a 28-day equivalent. Unknown dates are excluded rather than treated as zero. Relative ratios and `rising`/`lighter`/`usual` trends require all 7 observed short-term days and at least 24 observed reference days; chronic comparison also requires complete 28-day current coverage and at least 24 chronic-reference days. Recorded totals and coverage remain available when those thresholds are not met, with `trend="insufficient"`; a zero reference is labeled `building` instead of producing a ratio. Activity coverage comes only from completed activity sync/refresh metadata. Neither wellness dates nor an actual activity row proves complete activity-list coverage for a day. Reference scaling includes only AU from verified covered dates; partial-day activities remain in recorded totals without restoring coverage.
 
 AU is always `duration_minutes × effective_RPE`, using the existing reported/estimated effort source. Estimated effort is surfaced through `estimated_ratio`, `reported_ratio`, and `confidence`; a high estimated share makes the direction conservative and asks for better effort records, but does not block goal-based focus. Recovery score, short sleep, and a `tired` check-in take priority. The labels are engineering rhythm guidance only: they do not diagnose overtraining, undertraining, injury risk, or prescribe a clinical plan.
 
@@ -200,7 +200,7 @@ GET /api/trends?days=30&training_days=730
 
 `days`: 7–180.
 
-`training_days` is optional and accepts 28–730. When omitted, the legacy trends response is unchanged and no training history is added. When present, the response adds `training_load` with `methodology_version="jingyou-rhythm-v1"` and calendar points containing `coverage_7`, `coverage_28`, `all`, and the four category maps. Each load map has `load_7`, `load_28`, `reference_weekly`, `reference_28`, `recorded_7`, and `recorded_28`. Full-window loads are null until activity coverage is complete for all 7 or 28 dates; recorded fields contain only actual activity AU sums and may remain available under partial coverage. The independent references are `[D-34,D-7]` for the weekly-equivalent field and `[D-55,D-28]` for `reference_28`, using the same completed activity-sync/refresh metadata and coverage thresholds as the main Rhythm method. Future dates and unknown activity days are excluded rather than filled with zero.
+`training_days` is optional and accepts 28–730. When omitted, the legacy trends response is unchanged and no training history is added. When present, the response adds `training_load` with `methodology_version="jingyou-rhythm-v1"` and calendar points containing `coverage_7`, `coverage_28`, `all`, and the four category maps. Each load map has `load_7`, `load_28`, `reference_weekly`, `reference_28`, `recorded_7`, and `recorded_28`. Full-window loads are null until activity coverage is complete for all 7 or 28 dates; recorded fields contain only actual activity AU sums and may remain available under partial coverage. The independent references are `[D-34,D-7]` for the weekly-equivalent field and `[D-55,D-28]` for `reference_28`, using the same completed activity-sync/refresh metadata and coverage thresholds as the main Rhythm method. History points may come from verified dates or actual activity dates; actual activity dates alone never increase coverage. An actual but unverified date can retain recorded values with null complete-window loads. Reference scaling uses only covered-date AU. Future dates and wholly unknown activity days are excluded rather than filled with zero.
 
 Returns chronological series for HRV, daily metrics, sleep, and the same recovery calculation used by the dashboard. `readiness` contains `{date, score, value}` entries (with `value` equal to `score`) and is calculated from one in-memory historical snapshot, so a historical date uses the same formula and windows as the dashboard.
 
