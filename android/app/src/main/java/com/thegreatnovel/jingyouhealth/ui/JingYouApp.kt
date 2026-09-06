@@ -1,5 +1,7 @@
 package com.thegreatnovel.jingyouhealth.ui
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -68,6 +70,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -75,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.text.BidiFormatter
+import com.thegreatnovel.jingyouhealth.BuildConfig
 import com.thegreatnovel.jingyouhealth.model.ActivitySummary
 import com.thegreatnovel.jingyouhealth.model.AppLanguage
 import com.thegreatnovel.jingyouhealth.model.ChatMessage
@@ -105,7 +109,7 @@ fun JingYouApp(viewModel: JingYouViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     ProvideAppLanguage(state.language) {
         if (state.token == null) {
-            LoginScreen(state = state, onConnect = viewModel::connectUsbDev)
+            LoginScreen(state = state)
         } else {
             MainShell(state = state, viewModel = viewModel)
         }
@@ -113,10 +117,9 @@ fun JingYouApp(viewModel: JingYouViewModel) {
 }
 
 @Composable
-private fun LoginScreen(state: JingYouUiState, onConnect: () -> Unit) {
-    LaunchedEffect(Unit) {
-        if (!state.connecting && state.token == null) onConnect()
-    }
+private fun LoginScreen(state: JingYouUiState) {
+    val context = LocalContext.current
+    val loginUrl = "${BuildConfig.API_BASE_URL}/api/mobile-auth/bridge"
     Box(Modifier.fillMaxSize()) {
         DynamicAmbientBackdrop(tab = RootTab.COACH, modifier = Modifier.fillMaxSize(), energy = 0.82f)
         GlassPanel(
@@ -140,15 +143,17 @@ private fun LoginScreen(state: JingYouUiState, onConnect: () -> Unit) {
                 }
                 Text("JingYou Health", style = MaterialTheme.typography.headlineLarge)
                 Text(
-                    tr("手机负责体验，电脑负责 Garmin、数据库和 Agent。"),
+                    tr("通过浏览器安全登录，JingYou 会自动连接你的健康档案。"),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )
                 ActionButton(
-                    text = if (state.connecting) tr("正在连接") else tr("连接 JingYou"),
-                    onClick = onConnect,
-                    enabled = !state.connecting,
+                    text = tr("连接 JingYou"),
+                    onClick = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(loginUrl)))
+                    },
+                    enabled = true,
                 )
                 state.error?.let {
                     Text(tr("连接失败"), color = Rose, style = MaterialTheme.typography.labelLarge)

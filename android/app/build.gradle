@@ -15,7 +15,7 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
         def devProfile = project.findProperty("devProfile") ?: "owner"
-        buildConfigField "String", "API_BASE_URL", '"http://127.0.0.1:8788"'
+        buildConfigField "String", "API_BASE_URL", '"https://health.thegreatnovel.com"'
         buildConfigField "String", "DEV_PROFILE", '"' + devProfile + '"'
     }
 

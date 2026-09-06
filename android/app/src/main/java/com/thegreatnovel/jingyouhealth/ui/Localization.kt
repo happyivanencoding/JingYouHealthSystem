@@ -79,6 +79,7 @@ private val translations = mapOf(
     "USB 调试登录" to Translation("USB debug sign-in", "Connexion USB de débogage", "تسجيل دخول تصحيح USB"),
     "连接 JingYou" to Translation("Connect JingYou", "Connecter JingYou", "الاتصال بـ JingYou"),
     "手机负责体验，电脑负责 Garmin、数据库和 Agent。" to Translation("Your phone is the experience; your computer runs Garmin, the database, and the agent.", "Le téléphone porte l’expérience ; l’ordinateur gère Garmin, la base et l’agent.", "الهاتف للواجهة، والكمبيوتر يدير Garmin وقاعدة البيانات والوكيل."),
+    "通过浏览器安全登录，JingYou 会自动连接你的健康档案。" to Translation("Sign in securely in your browser and JingYou will connect your health profile automatically.", "Connectez-vous en toute sécurité dans votre navigateur ; JingYou reliera automatiquement votre profil santé.", "سجّل الدخول بأمان عبر المتصفح، وسيقوم JingYou بربط ملفك الصحي تلقائيًا."),
     "正在连接" to Translation("Connecting", "Connexion…", "جارٍ الاتصال"),
     "连接失败" to Translation("Connection failed", "Connexion échouée", "فشل الاتصال"),
 )
