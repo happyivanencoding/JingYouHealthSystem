@@ -150,3 +150,11 @@ data class ChatMessage(
     val createdAt: String,
     val status: String = "complete",
 )
+
+data class CoachMemoryItem(
+    val key: String,
+    val category: String,
+    val text: String,
+    val confidence: String,
+    val updatedAt: String,
+)

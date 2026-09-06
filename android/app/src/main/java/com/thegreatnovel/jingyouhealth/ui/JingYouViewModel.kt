@@ -18,6 +18,11 @@ import com.thegreatnovel.jingyouhealth.model.proposeSleepConfigurations
 import com.thegreatnovel.jingyouhealth.model.HomeModule
 import com.thegreatnovel.jingyouhealth.model.sleepContextSeries
 import com.thegreatnovel.jingyouhealth.model.SleepAlgorithm
+import com.thegreatnovel.jingyouhealth.model.CoachMemoryItem
+import com.thegreatnovel.jingyouhealth.model.CoachSleepModel
+import com.thegreatnovel.jingyouhealth.model.CoachSleepSnapshot
+import com.thegreatnovel.jingyouhealth.model.buildCoachSleepModel
+import com.thegreatnovel.jingyouhealth.model.buildCoachSleepSnapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -66,6 +71,10 @@ data class JingYouUiState(
     val homeModules: List<HomeModule> = listOf(HomeModule.READINESS, HomeModule.SLEEP, HomeModule.RECOVERY_SIGNALS, HomeModule.ACTIVITIES),
     val frenchHolidays: Boolean = true,
     val savingActivityEffort: Boolean = false,
+    val coachSleepSnapshot: CoachSleepSnapshot? = null,
+    val coachMemories: List<CoachMemoryItem> = emptyList(),
+    val loadingCoachMemory: Boolean = false,
+    val forgettingMemoryKey: String? = null,
 )
 
 class JingYouViewModel(application: Application) : AndroidViewModel(application) {
@@ -79,6 +88,7 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
     private var threadGeneration = 0L
     private var scoutGeneration = 0L
     private var scoutJob: Job? = null
+    private var coachDraftAnalysis: CoachSleepSnapshot? = null
 
     init {
         if (storedToken != null && currentToken == null) {
@@ -136,6 +146,7 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun resetSessionState(token: String?) {
+        coachDraftAnalysis = null
         scoutGeneration++
         scoutJob?.cancel()
         healthGeneration++
@@ -198,7 +209,41 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
         _state.update { it.copy(settingsOpen = open) }
     }
 
-    fun setCoachDraft(text: String) = _state.update { it.copy(coachDraft = text) }
+    fun setCoachDraft(text: String) {
+        if (text.isBlank() || coachDraftAnalysis?.let { !text.contains(it.throughDate) } == true) coachDraftAnalysis = null
+        _state.update { it.copy(coachDraft = text) }
+    }
+
+    fun prepareCoachQuestion(text: String, analysis: CoachSleepSnapshot? = null) {
+        coachDraftAnalysis = analysis
+        _state.update { it.copy(coachDraft = text) }
+    }
+
+    fun loadCoachMemory() {
+        val token = _state.value.token ?: return
+        if (_state.value.loadingCoachMemory) return
+        val generation = sessionGeneration
+        _state.update { it.copy(loadingCoachMemory = true) }
+        viewModelScope.launch {
+            val result = requestResult { api.coachMemory(token) }
+            if (!isCurrentSession(token, generation)) return@launch
+            result.onSuccess { items -> _state.update { it.copy(coachMemories = items, loadingCoachMemory = false) } }
+                .onFailure { error -> _state.update { it.copy(loadingCoachMemory = false, error = readableError(error, Failure.LOAD)) } }
+        }
+    }
+
+    fun forgetCoachMemory(key: String) {
+        val token = _state.value.token ?: return
+        if (_state.value.forgettingMemoryKey != null) return
+        val generation = sessionGeneration
+        _state.update { it.copy(forgettingMemoryKey = key) }
+        viewModelScope.launch {
+            val result = requestResult { api.forgetCoachMemory(token, key) }
+            if (!isCurrentSession(token, generation)) return@launch
+            result.onSuccess { _state.update { it.copy(coachMemories = it.coachMemories.filterNot { item -> item.key == key }, forgettingMemoryKey = null) } }
+                .onFailure { error -> _state.update { it.copy(forgettingMemoryKey = null, error = readableError(error, Failure.LOAD)) } }
+        }
+    }
 
     fun clearCoachDraft() = setCoachDraft("")
 
@@ -289,7 +334,7 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
     private fun ensureThread() {
         if (_state.value.activeThreadId != null || _state.value.threadLoading || _state.value.coachThinking) return
         val first = _state.value.threads.firstOrNull()
-        if (first != null) openThread(first.id) else newThread()
+        if (first != null) openThread(first.id, clearDraft = false) else createThread(clearDraft = false)
     }
 
     /** Pure local computation using the currently authenticated snapshot only. */
@@ -300,9 +345,10 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
         val session = sessionGeneration
         val request = ++scoutGeneration
         scoutJob?.cancel()
-        _state.update { it.copy(personalSleepReports = emptyMap(), scoutingSleep = true) }
+        _state.update { it.copy(personalSleepReports = emptyMap(), scoutingSleep = true, coachSleepSnapshot = null) }
         scoutJob = viewModelScope.launch {
             try {
+                val coachModels = mutableListOf<CoachSleepModel>()
                 for (outcome in listOf(SleepOutcome.DURATION_HOURS, SleepOutcome.DEEP_HOURS, SleepOutcome.REM_HOURS, SleepOutcome.DEEP_PERCENT, SleepOutcome.REM_PERCENT)) {
                     val report = withContext(Dispatchers.Default) {
                         val context = currentCoroutineContext()
@@ -313,6 +359,14 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
                     }
                     if (!isCurrentSession(token, session) || request != scoutGeneration) return@launch
                     _state.update { it.copy(personalSleepReports = it.personalSleepReports + (outcome to report)) }
+                    val coachModel = withContext(Dispatchers.Default) {
+                        val context = currentCoroutineContext()
+                        buildCoachSleepModel(report, snapshot.trends, snapshot.activities) { context.ensureActive() }
+                    }
+                    if (!isCurrentSession(token, session) || request != scoutGeneration) return@launch
+                    coachModels += coachModel
+                    val analysis = buildCoachSleepSnapshot(date, coachModels.toList(), snapshot.trends, snapshot.frenchHolidays)
+                    _state.update { it.copy(coachSleepSnapshot = analysis) }
                 }
             } finally {
                 if (isCurrentSession(token, session) && request == scoutGeneration) _state.update { it.copy(scoutingSleep = false) }
@@ -320,12 +374,15 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun newThread() {
+    fun newThread() = createThread(clearDraft = true)
+
+    private fun createThread(clearDraft: Boolean) {
         val token = _state.value.token ?: return
         if (_state.value.threadLoading || _state.value.coachThinking) return
         val generation = sessionGeneration
         val request = ++threadGeneration
-        _state.update { it.copy(threadLoading = true, error = null) }
+        if (clearDraft) coachDraftAnalysis = null
+        _state.update { it.copy(threadLoading = true, error = null, coachDraft = if (clearDraft) "" else it.coachDraft) }
         viewModelScope.launch {
             val result = requestResult { api.createThread(token, translate(_state.value.language, "新对话")) }
             if (!isCurrentSession(token, generation) || request != threadGeneration) return@launch
@@ -345,12 +402,13 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun openThread(threadId: String) {
+    fun openThread(threadId: String, clearDraft: Boolean = true) {
         val token = _state.value.token ?: return
         if (threadId.isBlank() || _state.value.threadLoading || _state.value.coachThinking) return
         val generation = sessionGeneration
         val request = ++threadGeneration
-        _state.update { it.copy(threadLoading = true, error = null) }
+        if (clearDraft) coachDraftAnalysis = null
+        _state.update { it.copy(threadLoading = true, error = null, coachDraft = if (clearDraft) "" else it.coachDraft) }
         viewModelScope.launch {
             val result = requestResult { api.messages(token, threadId) }
             if (!isCurrentSession(token, generation) || request != threadGeneration) return@launch
@@ -376,6 +434,8 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
         if (clean.isBlank() || _state.value.coachThinking || _state.value.threadLoading) return
         val generation = sessionGeneration
         val draftAtSend = _state.value.coachDraft
+        val draftAnalysisAtSend = coachDraftAnalysis
+        val analysisAtSend = draftAnalysisAtSend ?: _state.value.coachSleepSnapshot
         val pending = ChatMessage(
             id = "local_${UUID.randomUUID()}",
             role = "user",
@@ -394,7 +454,7 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
             )
         }
         viewModelScope.launch {
-            val posted = requestResult { api.postMessage(token, threadId, clean) }
+            val posted = requestResult { api.postMessage(token, threadId, clean, analysisAtSend) }
             if (!isCurrentThread(token, generation, threadId)) return@launch
             if (posted.isFailure) {
                 _state.update {
@@ -417,6 +477,7 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
                     threads = it.threads.touchThread(threadId, message.createdAt),
                 )
             }
+            if (coachDraftAnalysis === draftAnalysisAtSend) coachDraftAnalysis = null
             requestAnswer(token, generation, threadId)
         }
     }

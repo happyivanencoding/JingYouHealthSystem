@@ -10,6 +10,15 @@ private data class CoreTranslation(
 
 /** Strings shared by the core, sleep timing, and personal-model experiences. */
 private val coreTranslations = mapOf(
+    "Coach 记住了什么" to CoreTranslation("What Coach remembers", "Ce que Coach retient", "ما يتذكره المدرب"),
+    "目标、习惯和偏好会随对话逐渐积累。你可以直接纠正 Coach，也可以在这里让它忘记一条。" to CoreTranslation("Your goals, routines and preferences build up through conversation. Correct Coach directly, or ask it to forget an item here.", "Vos objectifs, habitudes et préférences s’enrichissent au fil des échanges. Corrigez Coach directement ou effacez un élément ici.", "تتراكم أهدافك وعاداتك وتفضيلاتك عبر المحادثات. يمكنك تصحيح المدرب مباشرةً أو حذف معلومة هنا."),
+    "还没有长期记忆。继续聊聊你在意的事。" to CoreTranslation("No long-term memories yet. Keep talking about what matters to you.", "Pas encore de mémoire durable. Continuez à parler de ce qui compte pour vous.", "لا توجد ذكريات طويلة الأمد بعد. واصل الحديث عمّا يهمك."),
+    "你告诉 Coach 的" to CoreTranslation("You told Coach", "Vous l’avez dit à Coach", "مما أخبرت به المدرب"),
+    "待你确认的理解" to CoreTranslation("Still to confirm with you", "À confirmer avec vous", "فهم يحتاج إلى تأكيدك"),
+    "忘记这条" to CoreTranslation("Forget this", "Oublier", "انسَ هذه المعلومة"),
+    "查看模型线索" to CoreTranslation("Explore model clues", "Explorer les indices du modèle", "استكشاف مؤشرات النموذج"),
+    "线索还不稳定" to CoreTranslation("The clues are not stable yet", "Les indices ne sont pas encore stables", "المؤشرات غير مستقرة بعد"),
+    "可以结合实际记录和你的感受，继续问 Coach。" to CoreTranslation("Keep exploring with Coach, using your records and how you feel.", "Poursuivez avec Coach en reliant vos relevés et vos sensations.", "واصل الاستكشاف مع المدرب بالاستناد إلى سجلاتك وشعورك."),
     "可用组成" to CoreTranslation("Available components", "Composantes disponibles", "المكونات المتاحة"),
     "恢复参考正在建立" to CoreTranslation("Building your recovery reference", "Construction de votre référence de récupération", "جارٍ بناء مرجع التعافي الخاص بك"),
     "积累足够个人记录后，就能看见自己的恢复基线。" to CoreTranslation("Your recovery baseline appears when enough personal records are available.", "Votre référence de récupération apparaîtra avec suffisamment de données personnelles.", "سيظهر خط تعافيك المرجعي عند توفّر سجلات شخصية كافية."),

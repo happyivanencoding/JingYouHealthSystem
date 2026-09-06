@@ -211,6 +211,47 @@ Content-Type: application/json
 
 This returns immediately after persisting the user message.
 
+The Android client may attach a validated personal sleep-analysis snapshot. It is stored in `chat_messages.metadata_json`; it is never appended to the user-visible `content`:
+
+```json
+{
+  "content": "我为什么最近睡得短？",
+  "sleep_analysis": {
+    "schema_version": 1,
+    "source": "android_personal_sleep_v1",
+    "through_date": "2026-09-06",
+    "generated_at": "2026-09-06T10:00:00Z",
+    "french_holidays": true,
+    "models": [
+      {
+        "outcome": "DURATION_HOURS",
+        "status": "READY",
+        "algorithm": "RANDOM_FOREST",
+        "factor_a": "STRESS",
+        "factor_b": "TRAINING_LOAD",
+        "feature_pack": "ENRICHED",
+        "lag_days": 1,
+        "train_n": 60,
+        "validation_n": 10,
+        "validation_start": "2026-08-01",
+        "validation_end": "2026-08-10",
+        "selection_mae": 1.1,
+        "selection_reference_mae": 1.2,
+        "mae": 1.0,
+        "reference_mae": 1.2,
+        "feature_importance": [
+          {"feature": "factor_a", "mae_increase": -0.1, "repeat_sd": 0.2}
+        ],
+        "dropped_features": []
+      }
+    ],
+    "timing": null
+  }
+}
+```
+
+The closed schema permits at most five models, twenty importance rows per model, and thirty dropped-feature tokens. Outcomes, statuses, factors, algorithm, feature pack, dates, MAE values and finite numeric ranges are validated. Unknown fields such as `user_id` or free-form `narrative` are rejected. Negative `mae_increase` is preserved because permutation importance can be negative; `repeat_sd` and MAE values must be finite and nonnegative. A request without `sleep_analysis` remains a normal Coach message.
+
 ### Generate Coach answer
 
 ```http
@@ -220,11 +261,13 @@ POST /api/chat/threads/{thread_id}/answer
 The backend:
 
 1. Resolves the authenticated user.
-2. Reads only that user's health DB and conversation history.
-3. Generates a per-turn `context.json` inside a per-user, per-thread temporary workspace.
-4. Starts AgentDock ACP Codex in `read-only` mode with that workspace as `cwd`.
-5. Persists the final assistant response into the same user's chat history.
-6. Removes the temporary turn workspace.
+2. Reads only that user's health DB, the latest user message metadata, and conversation history.
+3. Generates a per-turn `context.json` inside a per-user, per-thread temporary workspace. It includes the current user message id and a response-focus flag that tells Coach to answer the new question without repeating unchanged recent answers. When present, `context.sleep_analysis` includes the Android snapshot plus server labels `quality`, `latest_sleep_date`, `as_of`, `stale`, and `freshness`.
+4. Includes current-user Coach memory and related history when available. Forgotten keys are not rebuilt from old history unless the current user states them again.
+5. Starts AgentDock ACP Codex in `read-only` mode with that workspace as `cwd`.
+6. Accepts the JSON envelope `{ "answer": string, "memory_updates": [...] }` and displays/stores only `answer`; older plain-text ACP output remains supported.
+7. Persists the final assistant response into the same user's chat history and applies only validated memory updates sourced from the current user's original message.
+8. Removes the temporary turn workspace.
 
 The ACP sandbox was explicitly verified: a read-only session could read a marker inside its workspace and refused to read a marker outside it.
 
@@ -246,6 +289,17 @@ JINGYOU_COACH_REASONING
 The current `/answer` endpoint is a blocking HTTP request. Android can show local typing/status animation while waiting. The Windows ACP runner writes the authoritative answer to a UTF-8 file; backend subprocess stdout/stderr are captured as raw bytes so localized PowerShell output cannot fail the request during decoding. True token/event streaming can be added later if the frontend requires it.
 
 Coach output language is locked to the **latest user question only**. Earlier conversation history, Android UI language, profile/display names, and health-data labels must not influence the reply language. The agent must answer entirely in the same language as the current question, except for unavoidable proper nouns, standard units, abbreviations, or quoted text. This behavior has been smoke-tested with Chinese, English, French, and Arabic prompts against the real ACP Coach path.
+
+Sleep-analysis quality is `recent_validation_improved` only when a `READY` model has at least ten validation records and finite `mae < reference_mae`; otherwise a ready model is `unstable`, and no ready models is `insufficient`. Weak or negative importance is still passed to Coach as exploratory evidence, but Coach must not present it as a cause, direction, or explanation of one night. If `through_date` differs from the server's latest meaningful sleep date, `freshness` is `historical` and `stale` is true; the snapshot is never silently described as last night's result.
+
+### Coach memory
+
+```http
+GET /api/coach/memory
+DELETE /api/coach/memory/{key}
+```
+
+Both endpoints use the authenticated user's own memory store. The list response is `{ "items": [...] }` with at most 120 items; each item contains `key`, `category`, `text`, `confidence`, `source_message_ids`, `created_at`, and `updated_at`. DELETE is an explicit user action and returns `{ "deleted": true|false }`. Memory updates from Coach are accepted only when the memory layer can verify a current-user original message source; assistant analysis cannot self-confirm a durable fact.
 
 ## Current backend status
 

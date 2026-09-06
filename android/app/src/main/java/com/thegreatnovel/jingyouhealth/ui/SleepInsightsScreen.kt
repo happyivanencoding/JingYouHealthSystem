@@ -68,6 +68,9 @@ import com.thegreatnovel.jingyouhealth.model.filterSleepContext
 import com.thegreatnovel.jingyouhealth.model.fitSleepRegression
 import com.thegreatnovel.jingyouhealth.model.proposeSleepConfigurations
 import com.thegreatnovel.jingyouhealth.model.sleepContextSeries
+import com.thegreatnovel.jingyouhealth.model.CoachSleepSnapshot
+import com.thegreatnovel.jingyouhealth.model.buildCoachSleepModel
+import com.thegreatnovel.jingyouhealth.model.buildCoachSleepSnapshot
 import com.thegreatnovel.jingyouhealth.ui.components.GlassPanel
 import com.thegreatnovel.jingyouhealth.ui.theme.ArcticBlue
 import com.thegreatnovel.jingyouhealth.ui.theme.ElectricCyan
@@ -125,7 +128,7 @@ fun SleepInsightsScreen(
     state: JingYouUiState,
     anchorDate: String?,
     onBack: () -> Unit,
-    onAsk: (String) -> Unit,
+    onAsk: (String, CoachSleepSnapshot) -> Unit,
     initialOutcome: SleepOutcome = SleepOutcome.DURATION_HOURS,
 ) {
     BackHandler(onBack = onBack)
@@ -281,8 +284,11 @@ fun SleepInsightsScreen(
             }
             item {
                 val naturalPrompt = tr("请帮我解读这组睡眠洞察，区分记录支持的线索与尚待验证的假设。")
-                val coachPrompt = buildCoachPrompt(naturalPrompt, outcome, targetDate, safeCandidate, result)
-                QuietAction(tr("交给教练解读")) { onAsk(coachPrompt) }
+                val coachPrompt = naturalPrompt + "\n" + tr(outcome.labelChinese) + " · " + targetDate.orEmpty()
+                val analysis = remember(report, result, state.trends, state.frenchHolidays) {
+                    buildCoachSleepSnapshot(checkNotNull(targetDate), listOf(buildCoachSleepModel(checkNotNull(report), result)), state.trends, state.frenchHolidays)
+                }
+                QuietAction(tr("交给教练解读")) { onAsk(coachPrompt, analysis) }
             }
         }
         if (state.scoutingSleep && report != null) {
@@ -385,11 +391,11 @@ private fun InsightConclusion(result: RegressionResult) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    tr(if (beatsControl) "这组线索在留出记录上比简单参考更贴近" else "这组线索还没有超过简单参考"),
+                    tr(if (beatsControl) "这组线索在留出记录上比简单参考更贴近" else "线索还不稳定"),
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
-                    tr(if (beatsControl) "线索可以继续观察" else "目前线索还不稳定"),
+                    tr(if (beatsControl) "线索可以继续观察" else "可以结合实际记录和你的感受，继续问 Coach。"),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -519,29 +525,3 @@ private fun importanceLabels(candidate: PersonalSleepCandidate, keys: Set<String
 @Composable
 private fun bidiDate(date: String): String =
     if (LocalAppLanguage.current.rtl) BidiFormatter.getInstance(true).unicodeWrap(date) else date
-
-@Composable
-private fun buildCoachPrompt(
-    naturalPrompt: String,
-    outcome: SleepOutcome,
-    targetDate: String?,
-    candidate: PersonalSleepCandidate,
-    result: RegressionResult,
-): String {
-    val unit = tr(outcome.unit)
-    val labels = importanceLabels(candidate, result.featureImportances.map { it.key }.toSet())
-    val lines = result.featureImportances.sortedByDescending { it.increaseMae }.take(8).map {
-        "${labels[it.key]}: ${coreNumber(it.increaseMae, unit, 3)}"
-    }
-    return listOf(
-        naturalPrompt,
-        tr(outcome.labelChinese) + " · " + targetDate.orEmpty(),
-        tr("机器学习方法") + " · " + tr("随机森林"),
-        tr("用于复核的夜晚") + " · " + result.holdout.size,
-        tr("模型平均相差") + " · " + coreNumber(result.holdoutMAE, unit, 2),
-        tr("简单参考平均相差") + " · " + coreNumber(result.controlMAE, unit, 2),
-        tr("打乱一个信号后，预测会多错多少。条越长，模型越依赖它。"),
-        lines.joinToString("\n"),
-        tr("这是预测贡献，不是原因占比。相关信号会分摊信息；负数表示打乱后反而更准。"),
-    ).joinToString("\n")
-}

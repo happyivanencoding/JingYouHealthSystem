@@ -222,7 +222,7 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
     var activitiesOpen by rememberSaveable { mutableStateOf(false) }
     val detailOpen = sleepOpen || metricOpen != null || activitiesOpen || labOpen
     val askCoach: (String) -> Unit = { question ->
-        viewModel.setCoachDraft(question)
+        viewModel.prepareCoachQuestion(question)
         sleepOpen = false
         metricOpen = null
         activitiesOpen = false
@@ -297,7 +297,10 @@ private fun MainShell(state: JingYouUiState, viewModel: JingYouViewModel) {
                 DynamicAmbientBackdrop(tab = RootTab.TRENDS, modifier = Modifier.fillMaxSize(), energy = energy, photoEnabled = state.travelAtmosphere)
                 when {
                     labOpen -> detailState.SaveableStateProvider("sleep-lab-$labDate-$labOutcome-$labClock") {
-                        SleepInsightsScreen(state, labDate, { labOpen = false }, askCoach, initialOutcome = labOutcome)
+                        SleepInsightsScreen(state, labDate, { labOpen = false }, { question, analysis ->
+                            askCoach(question)
+                            viewModel.prepareCoachQuestion(question, analysis)
+                        }, initialOutcome = labOutcome)
                     }
                     metricOpen != null -> detailState.SaveableStateProvider("metric-${metricOpen}-${metricAnchor}") {
                         MetricExplorer(state, initial = metricOpen!!, anchorDate = metricAnchor, onBack = { metricOpen = null }, onSleep = { metricOpen = null; sleepOpen = true }, onAsk = askCoach, onOpenLab = openLab)
@@ -737,7 +740,7 @@ private fun CoachScreen(state: JingYouUiState, viewModel: JingYouViewModel) {
                 Spacer(Modifier.height(24.dp))
                 listOf("为什么昨晚没睡好", "解释睡眠与 HRV 的关系", "训练之后怎么恢复").forEach { key ->
                     val question = tr(key)
-                    QuietAction(question) { viewModel.setCoachDraft(question) }
+                    QuietAction(question) { viewModel.prepareCoachQuestion(question) }
                     Spacer(Modifier.height(8.dp))
                 }
             }
@@ -835,6 +838,7 @@ private fun SettingsSheet(state: JingYouUiState, viewModel: JingYouViewModel) {
                 Text(tr("设置"), style = MaterialTheme.typography.headlineMedium)
             }
             HomeModulesEditor(state.homeModules, viewModel::setHomeModules)
+            CoachMemoryPanel(state, viewModel::loadCoachMemory, viewModel::forgetCoachMemory)
             SettingSection(Icons.Rounded.DarkMode, tr("外观")) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ChoiceChip(tr("亮色"), state.themeMode == ThemeMode.LIGHT, Modifier.weight(1f)) { viewModel.setThemeMode(ThemeMode.LIGHT) }

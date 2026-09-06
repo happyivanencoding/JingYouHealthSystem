@@ -117,30 +117,38 @@ fun RecoveryBreakdown(readiness: ReadinessSummary?) {
 @Composable
 fun FeatureImportancePanel(result: RegressionResult, labels: Map<String, String>, unit: String) {
     var all by rememberSaveable { mutableStateOf(false) }
+    val improves = result.status == RegressionStatus.READY && result.holdoutMAE != null && result.controlMAE != null && result.holdoutMAE < result.controlMAE
+    var expanded by rememberSaveable(result.holdoutMAE, result.controlMAE) { mutableStateOf(improves) }
     val importance = result.featureImportances.sortedByDescending { it.increaseMae }
     if (importance.isEmpty()) return
     val scale = importance.maxOf { kotlin.math.abs(it.increaseMae) }.coerceAtLeast(0.001)
     GlassPanel(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(20.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text(tr("哪些信号，对这个模型更重要？"), style = MaterialTheme.typography.titleLarge)
-            Text(tr("打乱一个信号后，预测会多错多少。条越长，模型越依赖它。"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if ((result.holdoutMAE ?: Double.MAX_VALUE) >= (result.controlMAE ?: 0.0)) Text(tr("这个模型尚未超过简单参考，重要性先作探索。"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            (if (all) importance else importance.take(5)).forEach { item ->
-                val positive = item.increaseMae > 0
-                val accent = if (positive) ArcticBlue else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row {
-                        Text(labels[item.key] ?: tr("其他信号"), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                        Text(coreNumber(item.increaseMae, unit, 3), style = MaterialTheme.typography.labelMedium)
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { expanded = !expanded }, verticalAlignment = Alignment.CenterVertically) {
+                Text(tr("查看模型线索"), modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Icon(Icons.Rounded.ExpandMore, tr(if (expanded) "收起" else "展开"))
+            }
+            AnimatedVisibility(expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text(tr("打乱一个信号后，预测会多错多少。条越长，模型越依赖它。"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (!improves) Text(tr("这个模型尚未超过简单参考，重要性先作探索。"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    (if (all) importance else importance.take(5)).forEach { item ->
+                        val accent = if (item.increaseMae > 0) ArcticBlue else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row {
+                                Text(labels[item.key] ?: tr("其他信号"), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                Text(coreNumber(item.increaseMae, unit, 3), style = MaterialTheme.typography.labelMedium)
+                            }
+                            Box(Modifier.fillMaxWidth().height(7.dp).clip(CircleShape).background(accent.copy(alpha = 0.12f))) {
+                                Box(Modifier.fillMaxWidth((kotlin.math.abs(item.increaseMae) / scale).toFloat().coerceIn(0f, 1f)).height(7.dp).clip(CircleShape).background(accent))
+                            }
+                        }
                     }
-                    Box(Modifier.fillMaxWidth().height(7.dp).clip(CircleShape).background(accent.copy(alpha = 0.12f))) {
-                        Box(Modifier.fillMaxWidth((kotlin.math.abs(item.increaseMae) / scale).toFloat().coerceIn(0f, 1f)).height(7.dp).clip(CircleShape).background(accent))
-                    }
+                    if (importance.size > 5) TextButton(onClick = { all = !all }) { Text(tr(if (all) "收起" else "查看全部信号")) }
+                    Text(tr("这是预测贡献，不是原因占比。相关信号会分摊信息；负数表示打乱后反而更准。"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (result.droppedFeatures.any { it.contains("holiday") }) Text(tr("部分节假日样本较少，暂不单独估计。"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (importance.size > 5) TextButton(onClick = { all = !all }) { Text(tr(if (all) "收起" else "查看全部信号")) }
-            Text(tr("这是预测贡献，不是原因占比。相关信号会分摊信息；负数表示打乱后反而更准。"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (result.droppedFeatures.any { it.contains("holiday") }) Text(tr("部分节假日样本较少，暂不单独估计。"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

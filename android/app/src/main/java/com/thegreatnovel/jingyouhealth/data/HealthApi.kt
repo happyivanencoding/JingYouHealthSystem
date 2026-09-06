@@ -16,6 +16,8 @@ import com.thegreatnovel.jingyouhealth.model.Trends
 import com.thegreatnovel.jingyouhealth.model.UserSummary
 import com.thegreatnovel.jingyouhealth.model.RecoveryComponent
 import com.thegreatnovel.jingyouhealth.model.SleepClockPoint
+import com.thegreatnovel.jingyouhealth.model.CoachSleepSnapshot
+import com.thegreatnovel.jingyouhealth.model.CoachMemoryItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -95,14 +97,16 @@ class HealthApi(private val baseUrl: String = BuildConfig.API_BASE_URL) {
         }
     }
 
-    suspend fun postMessage(token: String, threadId: String, content: String): ChatMessage = withContext(Dispatchers.IO) {
+    suspend fun postMessage(token: String, threadId: String, content: String, sleepAnalysis: CoachSleepSnapshot? = null): ChatMessage = withContext(Dispatchers.IO) {
         parseMessage(
             JSONObject(
                 request(
                     "POST",
                     "/api/chat/threads/$threadId/messages",
                     token,
-                    JSONObject().put("content", content).toString(),
+                    JSONObject().put("content", content).apply {
+                        sleepAnalysis?.let { put("sleep_analysis", it.toCoachJson()) }
+                    }.toString(),
                 )
             )
         )
@@ -110,6 +114,21 @@ class HealthApi(private val baseUrl: String = BuildConfig.API_BASE_URL) {
 
     suspend fun answer(token: String, threadId: String): ChatMessage = withContext(Dispatchers.IO) {
         parseMessage(JSONObject(request("POST", "/api/chat/threads/$threadId/answer", token, null)))
+    }
+
+    suspend fun coachMemory(token: String): List<CoachMemoryItem> = withContext(Dispatchers.IO) {
+        val items = JSONObject(request("GET", "/api/coach/memory", token, null)).optJSONArray("items") ?: JSONArray()
+        buildList {
+            for (i in 0 until items.length()) {
+                val row = items.getJSONObject(i)
+                add(CoachMemoryItem(row.getString("key"), row.optString("category"), row.optString("text"), row.optString("confidence"), row.optString("updated_at")))
+            }
+        }
+    }
+
+    suspend fun forgetCoachMemory(token: String, key: String) = withContext(Dispatchers.IO) {
+        request("DELETE", "/api/coach/memory/${key.encodePath()}", token, null)
+        Unit
     }
 
     private fun parseMessage(item: JSONObject): ChatMessage = ChatMessage(
