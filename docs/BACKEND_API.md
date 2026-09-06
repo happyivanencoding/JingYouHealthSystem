@@ -189,7 +189,7 @@ JINGYOU_COACH_MODEL
 JINGYOU_COACH_REASONING
 ```
 
-The current `/answer` endpoint is a blocking HTTP request. Android can show local typing/status animation while waiting. True token/event streaming can be added later if the frontend requires it.
+The current `/answer` endpoint is a blocking HTTP request. Android can show local typing/status animation while waiting. The Windows ACP runner writes the authoritative answer to a UTF-8 file; backend subprocess stdout/stderr are captured as raw bytes so localized PowerShell output cannot fail the request during decoding. True token/event streaming can be added later if the frontend requires it.
 
 ## Current backend status
 

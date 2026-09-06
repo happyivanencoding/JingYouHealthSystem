@@ -326,12 +326,15 @@ def _generate_coach_answer(user: UserContext, thread_id: str) -> tuple[str, dict
             command,
             cwd=ROOT,
             capture_output=True,
-            text=True,
             timeout=270,
             check=False,
         )
         if result.returncode != 0 or not output_path.exists():
-            detail = (result.stderr or result.stdout or "ACP coach failed")[-1600:]
+            raw_detail = result.stderr or result.stdout or b"ACP coach failed"
+            if isinstance(raw_detail, bytes):
+                detail = raw_detail.decode("utf-8", errors="replace")[-1600:]
+            else:
+                detail = str(raw_detail)[-1600:]
             raise HTTPException(status_code=502, detail=detail)
         answer = output_path.read_text(encoding="utf-8").lstrip("\ufeff").strip()
         if not answer:

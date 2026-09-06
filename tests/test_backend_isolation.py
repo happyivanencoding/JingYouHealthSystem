@@ -178,7 +178,7 @@ class BackendIsolationTests(unittest.TestCase):
             expected_hrv = 61 if context["profile"]["display_name"] == "Owner Person" else 72
             self.assertEqual(context["health"]["today"]["hrv"]["last_night_avg"], expected_hrv)
             output.write_text(f"answer for {context['profile']['display_name']} hrv={expected_hrv}", encoding="utf-8")
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return SimpleNamespace(returncode=0, stdout=b"\xa1control-output", stderr=b"")
 
         with patch.object(app.subprocess, "run", side_effect=fake_run):
             owner_answer = app.answer_thread(owner_thread["id"], self.owner)
