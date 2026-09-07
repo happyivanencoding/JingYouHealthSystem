@@ -23,7 +23,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,6 +45,7 @@ import com.thegreatnovel.jingyouhealth.model.TrendPoint
 import com.thegreatnovel.jingyouhealth.model.calendarWindow
 import com.thegreatnovel.jingyouhealth.ui.components.BaselinePositionChart
 import com.thegreatnovel.jingyouhealth.ui.components.GlassPanel
+import com.thegreatnovel.jingyouhealth.ui.components.StateTimelineChart
 import com.thegreatnovel.jingyouhealth.ui.theme.Amber
 import com.thegreatnovel.jingyouhealth.ui.theme.AuroraViolet
 import com.thegreatnovel.jingyouhealth.ui.theme.ElectricCyan
@@ -98,43 +102,202 @@ fun RecoverySignalsPanel(
 
 @Composable
 fun DailySignalsPanel(state: JingYouUiState, onMetric: (HealthMetric) -> Unit) {
-    val daily = state.dashboard?.daily
-    GlassPanel(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(18.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val timeline = state.stateTimeline
+    val summary = timeline?.summary
+    val bodyPlot = remember(timeline?.bodyBattery) {
+        timeline?.bodyBattery.orEmpty().mapNotNull { point ->
+            val minute = stateMinute(point.timestamp)
+            val value = point.value?.takeIf { it.isFinite() && it in 0f..100f }
+            if (minute == null || value == null) null else minute to value
+        }
+    }
+    val stressPlot = remember(timeline?.stress) {
+        timeline?.stress.orEmpty().mapNotNull { point ->
+            stateMinute(point.timestamp)?.let { it to point.value?.takeIf { value -> value.isFinite() && value in 0f..100f } }
+        }
+    }
+    val activityMinutes = remember(timeline?.activities) {
+        timeline?.activities.orEmpty().mapNotNull { stateMinute(it.startTime) }
+    }
+    val sleepRange = remember(timeline?.sleepStart, timeline?.sleepEnd, timeline?.date) {
+        stateSleepRange(timeline?.sleepStart, timeline?.sleepEnd, timeline?.date)
+    }
+    val currentMinute = remember(timeline?.generatedAt, timeline?.date) {
+        timeline?.generatedAt?.takeIf { it.take(10) == timeline?.date }?.let(::stateMinute)
+    }
+    val latestMinute = bodyPlot.lastOrNull()?.first ?: stressPlot.lastOrNull()?.first
+    var cursorMinute by remember(timeline?.date, timeline?.generatedAt) {
+        mutableFloatStateOf(latestMinute ?: currentMinute ?: 0f)
+    }
+    val selectedEnergy = bodyPlot.minByOrNull { kotlin.math.abs(it.first - cursorMinute) }
+        ?.takeIf { kotlin.math.abs(it.first - cursorMinute) <= 18f }?.second
+    val selectedStress = stressPlot.filter { it.second != null }.minByOrNull { kotlin.math.abs(it.first - cursorMinute) }
+        ?.takeIf { kotlin.math.abs(it.first - cursorMinute) <= 18f }?.second
+    val stressHistory = remember(state.trends.stress, timeline?.date) {
+        val previous = timeline?.date?.let { runCatching { LocalDate.parse(it).minusDays(1).toString() }.getOrNull() }
+        calendarWindow(state.trends.stress, previous, days = 42)
+            .mapNotNull { it.value?.takeIf { value -> value.isFinite() && value >= 0f } }
+            .sorted()
+    }
+    val stressDetail = when {
+        summary?.averageStress == null -> tr("暂无数据")
+        stressHistory.size < 7 -> tr("正在积累你的平时范围")
+        summary.averageStress < signalQuantile(stressHistory, 0.25f) -> tr("低于你的平时范围")
+        summary.averageStress > signalQuantile(stressHistory, 0.75f) -> tr("高于你的平时范围")
+        else -> tr("在你的平时范围内")
+    }
+
+    GlassPanel(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(18.dp), accent = ElectricCyan) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(tr("今日信号"), style = MaterialTheme.typography.titleMedium)
-                Text(tr("和自己的平时相比"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(tr("今日状态"), style = MaterialTheme.typography.titleMedium)
+                Text(tr("精力余量与压力，按一天展开"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            SignalBaselineRow(
-                label = tr("静息心率"),
-                current = signalCurrent(state.trends.restingHr, daily?.date, daily?.restingHr),
-                points = state.trends.restingHr,
-                date = daily?.date,
-                unit = "bpm",
-                accent = Rose,
-                onClick = { onMetric(HealthMetric.RHR) },
-            )
-            SignalsDivider()
-            SignalBaselineRow(
-                label = tr("压力"),
-                current = signalCurrent(state.trends.stress, daily?.date, daily?.avgStress),
-                points = state.trends.stress,
-                date = daily?.date,
-                unit = "",
-                accent = Amber,
-                onClick = { onMetric(HealthMetric.STRESS) },
-            )
-            SignalsDivider()
-            Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(tr("步数"), style = MaterialTheme.typography.bodyMedium)
-                    Text(signalDate(daily?.date), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                StateMetric(
+                    label = tr("精力余量"),
+                    value = signalNumber(summary?.latestBodyBattery),
+                    detail = energyLabel(summary?.latestBodyBattery),
+                    accent = ElectricCyan,
+                    modifier = Modifier.weight(1f),
+                )
+                StateMetric(
+                    label = tr("今日压力"),
+                    value = signalNumber(summary?.averageStress),
+                    detail = stressDetail,
+                    accent = Amber,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onMetric(HealthMetric.STRESS) },
+                )
+            }
+            if (timeline == null || (bodyPlot.isEmpty() && stressPlot.isEmpty())) {
+                Text(tr("同步 Garmin 后显示今天的精力与压力变化"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                Text(
+                    stateClockLabel(cursorMinute) + " · " + tr("精力") + " " + signalNumber(selectedEnergy) + " · " + tr("压力") + " " + signalNumber(selectedStress),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                StateTimelineChart(
+                    bodyBattery = bodyPlot,
+                    stress = stressPlot,
+                    sleepRange = sleepRange,
+                    activityMinutes = activityMinutes,
+                    currentMinute = currentMinute,
+                    cursorMinute = cursorMinute,
+                    energyStart = ElectricCyan,
+                    energyEnd = AuroraViolet,
+                    stressAccent = Amber,
+                    sleepAccent = AuroraViolet,
+                    activityAccent = Rose,
+                    onCursorMinute = { cursorMinute = it },
+                    modifier = Modifier.fillMaxWidth().height(190.dp),
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    listOf("00", "06", "12", "18", "24").forEach {
+                        Text(signalBidi(it), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-                Text(signalNumber(daily?.steps?.takeIf { it >= 0 }?.toFloat(), grouping = true), style = MaterialTheme.typography.titleLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    StateLegend(ElectricCyan, tr("精力"))
+                    StateLegend(Amber, tr("压力"))
+                    if (sleepRange != null) StateLegend(AuroraViolet, tr("睡眠"))
+                    if (activityMinutes.isNotEmpty()) StateLegend(Rose, tr("运动"))
+                }
+                summary?.highestStressWindow?.let { window ->
+                    val start = stateClockFromTimestamp(window.start)
+                    val end = stateClockFromTimestamp(window.end)
+                    if (start != null && end != null) {
+                        Text(
+                            tr("压力最集中的时段") + " · " + signalBidi("$start–$end"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                summary?.bodyBatteryDropSincePeak?.takeIf { it > 0f }?.let {
+                    Text(
+                        tr("从今日精力高点已消耗") + " " + signalNumber(it),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
 }
+
+@Composable
+private fun StateMetric(
+    label: String,
+    value: String,
+    detail: String,
+    accent: Color,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+) {
+    val card = modifier
+        .clip(RoundedCornerShape(16.dp))
+        .background(accent.copy(alpha = 0.07f))
+        .then(if (onClick == null) Modifier else Modifier.clickable(role = Role.Button, onClick = onClick))
+        .padding(horizontal = 14.dp, vertical = 12.dp)
+    Column(card, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, fontSize = 30.sp, fontWeight = FontWeight.Medium)
+        Text(detail, style = MaterialTheme.typography.bodySmall, color = accent)
+    }
+}
+
+@Composable
+private fun StateLegend(color: Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Box(Modifier.width(14.dp).height(3.dp).clip(RoundedCornerShape(2.dp)).background(color.copy(alpha = 0.82f)))
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun energyLabel(value: Float?): String = tr(
+    when {
+        value == null -> "暂无数据"
+        value <= 20f -> "很低"
+        value <= 40f -> "偏低"
+        value <= 70f -> "中等"
+        else -> "充足"
+    }
+)
+
+private fun stateMinute(value: String?): Float? {
+    if (value.isNullOrBlank()) return null
+    val time = runCatching { OffsetDateTime.parse(value).toLocalTime() }.getOrNull()
+        ?: runCatching { LocalDateTime.parse(value.replace(' ', 'T')).toLocalTime() }.getOrNull()
+        ?: return null
+    return time.hour * 60f + time.minute + time.second / 60f
+}
+
+private fun stateSleepRange(start: String?, end: String?, target: String?): Pair<Float, Float>? {
+    val targetDate = target?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: return null
+    fun local(value: String?): LocalDateTime? = value?.let {
+        runCatching { OffsetDateTime.parse(it).toLocalDateTime() }.getOrNull()
+            ?: runCatching { LocalDateTime.parse(it.replace(' ', 'T')) }.getOrNull()
+    }
+    val from = local(start) ?: return null
+    val to = local(end) ?: return null
+    val startMinute = if (from.toLocalDate().isBefore(targetDate)) 0f else stateMinute(from.toString()) ?: return null
+    val endMinute = if (to.toLocalDate().isAfter(targetDate)) 1440f else stateMinute(to.toString()) ?: return null
+    return if (endMinute > startMinute) startMinute to endMinute else null
+}
+
+@Composable
+private fun stateClockLabel(minute: Float): String {
+    val total = minute.toInt().coerceIn(0, 1439)
+    val locale = Locale.forLanguageTag(LocalAppLanguage.current.tag)
+    return signalBidi(String.format(locale, "%02d:%02d", total / 60, total % 60))
+}
+
+@Composable
+private fun stateClockFromTimestamp(value: String?): String? =
+    stateMinute(value)?.let { stateClockLabel(it) }
 
 @Composable
 private fun SignalBaselineRow(

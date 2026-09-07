@@ -4,7 +4,8 @@ import json
 import sqlite3
 import sys
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta
+from collections import deque
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,151 @@ def _latest_body_battery(con: sqlite3.Connection) -> dict[str, Any] | None:
            ORDER BY ts DESC LIMIT 1"""
     ).fetchone()
     return {"timestamp": row["ts"], "value": row["value"]} if row else None
+
+
+def _timeline_timezone(con: sqlite3.Connection, target: date) -> tuple[timezone, str]:
+    raw = con.execute(
+        "SELECT payload_json FROM raw_records WHERE source='garmin' AND kind='stress_raw' AND event_date=?",
+        (target.isoformat(),),
+    ).fetchone()
+    offset = timedelta(0)
+    if raw is not None:
+        payload = json.loads(raw["payload_json"])
+        local = datetime.fromisoformat(str(payload["startTimestampLocal"])).replace(tzinfo=None)
+        gmt = datetime.fromisoformat(str(payload["startTimestampGMT"])).replace(tzinfo=None)
+        offset = local - gmt
+    activity = con.execute(
+        """SELECT timezone,start_time,start_time_gmt FROM activities
+             WHERE source='garmin' AND substr(start_time,1,10)<=? ORDER BY start_time DESC LIMIT 1""",
+        (target.isoformat(),),
+    ).fetchone()
+    if raw is None and activity is not None and activity["start_time"] and activity["start_time_gmt"]:
+        local = datetime.fromisoformat(str(activity["start_time"])).replace(tzinfo=None)
+        gmt = datetime.fromisoformat(str(activity["start_time_gmt"])).replace(tzinfo=None)
+        offset = local - gmt
+    name = str(activity["timezone"] or "UTC") if activity is not None else "UTC"
+    return timezone(offset, name), name
+
+
+def _sample_local_datetime(row: sqlite3.Row, zone: timezone) -> datetime | None:
+    if row["timestamp_gmt"]:
+        try:
+            parsed = datetime.fromisoformat(str(row["timestamp_gmt"]).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(zone)
+        except ValueError:
+            return None
+    if row["timestamp_local"]:
+        try:
+            parsed = datetime.fromisoformat(str(row["timestamp_local"]).replace("Z", "+00:00"))
+            return parsed.replace(tzinfo=zone) if parsed.tzinfo is None else parsed.astimezone(zone)
+        except ValueError:
+            return None
+    return None
+
+
+def _timeline_samples(
+    con: sqlite3.Connection,
+    metric: str,
+    target: date,
+    zone: timezone,
+    *,
+    null_invalid_stress: bool = False,
+) -> list[dict[str, Any]]:
+    start_local = datetime.combine(target, time.min, tzinfo=zone)
+    end_local = start_local + timedelta(days=1)
+    rows = con.execute(
+        """SELECT timestamp_gmt,timestamp_local,timestamp_key,value
+             FROM time_series_samples
+            WHERE source='garmin' AND metric=? AND (
+                (timestamp_gmt IS NOT NULL AND timestamp_gmt>=? AND timestamp_gmt<?)
+                OR (timestamp_gmt IS NULL AND timestamp_local IS NOT NULL
+                    AND timestamp_local>=? AND timestamp_local<?)
+            )
+            ORDER BY COALESCE(timestamp_gmt,timestamp_local,timestamp_key)""",
+        (
+            metric,
+            start_local.astimezone(timezone.utc).isoformat(),
+            end_local.astimezone(timezone.utc).isoformat(),
+            start_local.replace(tzinfo=None).isoformat(),
+            end_local.replace(tzinfo=None).isoformat(),
+        ),
+    ).fetchall()
+    points: list[dict[str, Any]] = []
+    for row in rows:
+        local_dt = _sample_local_datetime(row, zone)
+        if local_dt is None or local_dt.date() != target:
+            continue
+        raw_value = row["value"]
+        value = float(raw_value) if isinstance(raw_value, (int, float)) else None
+        if metric.startswith("body_battery"):
+            if value is None or not 0.0 <= value <= 100.0:
+                continue
+        elif null_invalid_stress and (value is None or not 0.0 <= value <= 100.0):
+            value = None
+        points.append({"timestamp": local_dt.isoformat(timespec="seconds"), "value": value})
+    return points
+
+
+def _highest_stress_window(points: list[dict[str, Any]]) -> dict[str, Any] | None:
+    window: deque[tuple[datetime, float]] = deque()
+    best: tuple[float, datetime, datetime] | None = None
+    for point in points:
+        value = point.get("value")
+        if not isinstance(value, (int, float)):
+            continue
+        try:
+            stamp = datetime.fromisoformat(str(point["timestamp"]))
+        except ValueError:
+            continue
+        while window and stamp - window[0][0] > timedelta(minutes=30):
+            window.popleft()
+        window.append((stamp, float(value)))
+        if len(window) < 5:
+            continue
+        average = sum(item[1] for item in window) / len(window)
+        if best is None or average > best[0]:
+            best = (average, window[0][0], window[-1][0])
+    if best is None:
+        return None
+    return {
+        "start": best[1].isoformat(timespec="seconds"),
+        "end": best[2].isoformat(timespec="seconds"),
+        "average": round(best[0], 1),
+    }
+
+
+def _timeline_summary(
+    body_battery: list[dict[str, Any]],
+    stress: list[dict[str, Any]],
+    daily: sqlite3.Row | None,
+    activity_count: int,
+) -> dict[str, Any]:
+    valid_stress = [point for point in stress if isinstance(point.get("value"), (int, float))]
+    latest_body = body_battery[-1] if body_battery else None
+    latest_stress = valid_stress[-1] if valid_stress else None
+    peak_body = max(body_battery, key=lambda point: float(point["value"])) if body_battery else None
+    average_stress = daily["avg_stress"] if daily and daily["avg_stress"] is not None else None
+    if average_stress is None and valid_stress:
+        average_stress = sum(float(point["value"]) for point in valid_stress) / len(valid_stress)
+    return {
+        "latest_body_battery": latest_body["value"] if latest_body else None,
+        "latest_body_battery_at": latest_body["timestamp"] if latest_body else None,
+        "body_battery_peak": peak_body["value"] if peak_body else None,
+        "body_battery_peak_at": peak_body["timestamp"] if peak_body else None,
+        "body_battery_drop_since_peak": (
+            round(float(peak_body["value"]) - float(latest_body["value"]), 1)
+            if peak_body and latest_body else None
+        ),
+        "body_battery_charged": daily["body_battery_charged"] if daily else None,
+        "body_battery_drained": daily["body_battery_drained"] if daily else None,
+        "latest_stress": latest_stress["value"] if latest_stress else None,
+        "latest_stress_at": latest_stress["timestamp"] if latest_stress else None,
+        "average_stress": round(float(average_stress), 1) if average_stress is not None else None,
+        "highest_stress_window": _highest_stress_window(stress),
+        "activity_count": activity_count,
+    }
 
 
 _ACTIVITY_COLUMNS = """
@@ -354,6 +500,57 @@ def dashboard(user: UserContext) -> dict[str, Any]:
             "recent_activities": recent_activities,
         }
 
+def state_timeline(user: UserContext, target_date: str | date | None = None) -> dict[str, Any]:
+    requested = target_date if isinstance(target_date, date) else date.fromisoformat(target_date) if target_date else None
+    with _con(user) as con:
+        target = requested or date.today()
+        zone, zone_name = _timeline_timezone(con, target)
+        body_battery = _timeline_samples(con, "body_battery", target, zone)
+        if not body_battery:
+            body_battery = _timeline_samples(con, "body_battery_sparse", target, zone)
+        stress = _timeline_samples(con, "stress_level", target, zone, null_invalid_stress=True)
+        daily = con.execute(
+            """SELECT avg_stress,body_battery_charged,body_battery_drained
+                 FROM daily_metrics WHERE source='garmin' AND date=?""",
+            (target.isoformat(),),
+        ).fetchone()
+        sleep = con.execute(
+            """SELECT date,sleep_score,sleep_time_sec,deep_sleep_sec,rem_sleep_sec,
+                      light_sleep_sec,awake_sleep_sec,raw_json
+                 FROM sleep_sessions WHERE source='garmin' AND date=?""",
+            (target.isoformat(),),
+        ).fetchone()
+        sleep_payload = _sleep_response(dict(sleep)) if sleep else None
+        day_activities = [
+            row for row in _activity_rows(con)
+            if str(row.get("start_time") or "")[:10] == target.isoformat()
+        ]
+        activities_payload = [
+            {
+                "activity_id": row.get("activity_id"),
+                "activity_name": row.get("activity_name"),
+                "activity_type": row.get("activity_type"),
+                "start_time": row.get("start_time"),
+                "duration_s": row.get("duration_s"),
+                "category": row.get("category"),
+            }
+            for row in day_activities
+        ]
+        return {
+            "date": target.isoformat(),
+            "timezone": zone_name,
+            "generated_at": datetime.now(zone).isoformat(timespec="seconds"),
+            "body_battery": body_battery,
+            "stress": stress,
+            "sleep": {
+                "start": sleep_payload.get("sleep_start_local") if sleep_payload else None,
+                "end": sleep_payload.get("sleep_end_local") if sleep_payload else None,
+            },
+            "activities": activities_payload,
+            "summary": _timeline_summary(body_battery, stress, daily, len(activities_payload)),
+        }
+
+
 def trends(user: UserContext, days: int = 30, training_days: int | None = None) -> dict[str, Any]:
     days = max(7, min(days, 180))
     with _con(user) as con:
@@ -454,9 +651,17 @@ def activity_by_id(user: UserContext, activity_id: str) -> dict[str, Any] | None
 
 
 def agent_context(user: UserContext, days: int = 42) -> dict[str, Any]:
+    timeline = state_timeline(user)
     return {
         "profile": {"display_name": user.display_name},
         "today": dashboard(user),
+        "today_state": {
+            "date": timeline["date"],
+            "timezone": timeline["timezone"],
+            "summary": timeline["summary"],
+            "sleep": timeline["sleep"],
+            "activities": timeline["activities"],
+        },
         "trends": trends(user, days=days),
         "recent_activities": activities(user, limit=24),
     }

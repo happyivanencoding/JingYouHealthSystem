@@ -49,6 +49,7 @@ from health_queries import (  # noqa: E402
     activities,
     agent_context,
     dashboard,
+    state_timeline,
     training as training_status,
     trends,
 )
@@ -177,6 +178,14 @@ def me(user: UserContext = Depends(current_user)) -> dict[str, str]:
 @app.get("/api/dashboard")
 def get_dashboard(user: UserContext = Depends(current_user)) -> dict[str, object]:
     return dashboard(user)
+
+
+@app.get("/api/state-timeline")
+def get_state_timeline(
+    date: Date | None = Query(default=None),
+    user: UserContext = Depends(current_user),
+) -> dict[str, object]:
+    return state_timeline(user, date)
 
 
 @app.get("/api/trends")

@@ -120,6 +120,48 @@ The four component keys are always stable; a component with insufficient data ha
 
 `personal-v1` is an engineering composite for this user's historical data, not a clinical scale or a medically validated universal formula. Sleep, log-HRV, and resting-HR references use the strict prior 42 days. Load compares the recent 3 days against observed dates in the prior 28 days; future rows and another user's database are excluded. Load component details also include `source`, `estimated_ratio`, and `reported_ratio` when available. An estimated activity effort is a category default, never a claim about the user's actual RPE.
 
+### Intraday state timeline
+
+```http
+GET /api/state-timeline?date=2026-08-12
+```
+
+`date` is optional and defaults to today. The endpoint is current-user scoped and returns the raw normalized intraday observations needed by the Android “Today’s state” card without creating another fatigue score. Body Battery remains Garmin’s 0–100 energy-reserve signal; stress remains Garmin physiological stress.
+
+```json
+{
+  "date": "2026-08-12",
+  "timezone": "Europe/Paris",
+  "generated_at": "2026-08-12T21:30:00+02:00",
+  "body_battery": [
+    {"timestamp": "2026-08-12T07:30:00+02:00", "value": 82.0}
+  ],
+  "stress": [
+    {"timestamp": "2026-08-12T14:00:00+02:00", "value": 64.0},
+    {"timestamp": "2026-08-12T14:03:00+02:00", "value": null}
+  ],
+  "sleep": {"start": "2026-08-12T00:10:00", "end": "2026-08-12T07:45:00"},
+  "activities": [],
+  "summary": {
+    "latest_body_battery": 31.0,
+    "body_battery_peak": 82.0,
+    "body_battery_drop_since_peak": 51.0,
+    "latest_stress": 42.0,
+    "average_stress": 36.0,
+    "highest_stress_window": {
+      "start": "2026-08-12T14:00:00+02:00",
+      "end": "2026-08-12T14:30:00+02:00",
+      "average": 71.4
+    },
+    "activity_count": 0
+  }
+}
+```
+
+Garmin stress sentinel values such as `-1`/`-2` are returned as `null`; clients must render them as missing gaps, never as zero stress. Intraday epoch samples are converted to the device day using Garmin’s own Local/GMT day-boundary offset, while the human-readable timezone label follows the user’s recent Garmin activity timezone. This avoids interpreting UTC samples as local clock time.
+
+Coach does **not** receive these hundreds of timeline points. `agent_context` includes a compact `today_state` with the date/timezone, sleep interval, activity events, current/peak energy, energy drop, average/latest stress, and the highest-stress interval. This keeps Coach useful without expanding every turn with raw high-frequency samples.
+
 ### JingYou Rhythm training status
 
 ```http

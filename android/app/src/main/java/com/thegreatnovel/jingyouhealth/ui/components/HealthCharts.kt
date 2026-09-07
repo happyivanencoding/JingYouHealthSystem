@@ -1,6 +1,8 @@
 package com.thegreatnovel.jingyouhealth.ui.components
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -10,8 +12,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.thegreatnovel.jingyouhealth.model.TrendPoint
 import kotlin.math.floor
@@ -184,6 +189,127 @@ fun AssociationScatterPlot(
                 radius = 3.6.dp.toPx(),
                 center = Offset(inset + width * normalized(x, minX, maxX), inset + height * (1f - normalized(y, minY, maxY))),
             )
+        }
+    }
+}
+
+@Composable
+fun StateTimelineChart(
+    bodyBattery: List<Pair<Float, Float>>,
+    stress: List<Pair<Float, Float?>>,
+    sleepRange: Pair<Float, Float>?,
+    activityMinutes: List<Float>,
+    currentMinute: Float?,
+    cursorMinute: Float?,
+    energyStart: Color,
+    energyEnd: Color,
+    stressAccent: Color,
+    sleepAccent: Color,
+    activityAccent: Color,
+    onCursorMinute: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val ink = MaterialTheme.colorScheme.onSurfaceVariant
+    val interactive = modifier.pointerInput(onCursorMinute) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            fun update(x: Float) {
+                if (size.width > 0) onCursorMinute((x / size.width * 1440f).coerceIn(0f, 1440f))
+            }
+            update(down.position.x)
+            while (true) {
+                val event = awaitPointerEvent()
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                update(change.position.x)
+                if (!change.pressed) break
+            }
+        }
+    }
+    Canvas(interactive) {
+        if (size.width <= 0f || size.height <= 0f) return@Canvas
+        val insetX = 5.dp.toPx()
+        val insetY = 8.dp.toPx()
+        val width = (size.width - insetX * 2f).coerceAtLeast(1f)
+        val height = (size.height - insetY * 2f).coerceAtLeast(1f)
+        val bottom = insetY + height
+        fun x(minute: Float) = insetX + width * (minute / 1440f).coerceIn(0f, 1f)
+        fun y(value: Float) = insetY + height * (1f - (value / 100f).coerceIn(0f, 1f))
+
+        sleepRange?.let { range ->
+            val left = x(range.first)
+            val right = x(range.second)
+            if (right > left) {
+                drawRoundRect(
+                    color = sleepAccent.copy(alpha = 0.08f),
+                    topLeft = Offset(left, insetY),
+                    size = Size(right - left, height),
+                    cornerRadius = CornerRadius(10.dp.toPx()),
+                )
+            }
+        }
+        listOf(0f, 360f, 720f, 1080f, 1440f).forEach { minute ->
+            drawLine(ink.copy(alpha = 0.07f), Offset(x(minute), insetY), Offset(x(minute), bottom), 1.dp.toPx())
+        }
+        stress.forEach { (minute, value) ->
+            value?.takeIf { it.isFinite() && it in 0f..100f }?.let {
+                val barHeight = height * 0.34f * (it / 100f)
+                drawLine(
+                    stressAccent.copy(alpha = 0.24f),
+                    Offset(x(minute), bottom),
+                    Offset(x(minute), bottom - barHeight),
+                    2.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+            }
+        }
+
+        var path = Path()
+        var lastMinute: Float? = null
+        fun flushPath() {
+            if (lastMinute != null) {
+                drawPath(
+                    path = path,
+                    brush = Brush.horizontalGradient(listOf(energyStart, energyEnd)),
+                    style = Stroke(width = 2.6.dp.toPx(), cap = StrokeCap.Round),
+                )
+            }
+            path = Path()
+            lastMinute = null
+        }
+        bodyBattery.sortedBy { it.first }.forEach { (minute, value) ->
+            if (!value.isFinite() || value !in 0f..100f) return@forEach
+            val previous = lastMinute
+            if (previous == null || minute - previous > 15f) {
+                flushPath()
+                path.moveTo(x(minute), y(value))
+            } else {
+                path.lineTo(x(minute), y(value))
+            }
+            lastMinute = minute
+        }
+        flushPath()
+
+        activityMinutes.forEach { minute ->
+            val center = Offset(x(minute), insetY + 8.dp.toPx())
+            drawCircle(activityAccent.copy(alpha = 0.18f), 7.dp.toPx(), center)
+            drawCircle(activityAccent.copy(alpha = 0.88f), 3.dp.toPx(), center)
+        }
+        currentMinute?.let { minute ->
+            drawLine(
+                ink.copy(alpha = 0.25f),
+                Offset(x(minute), insetY),
+                Offset(x(minute), bottom),
+                1.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 4.dp.toPx())),
+            )
+        }
+        cursorMinute?.let { minute ->
+            val cursorX = x(minute)
+            drawLine(ink.copy(alpha = 0.52f), Offset(cursorX, insetY), Offset(cursorX, bottom), 1.dp.toPx())
+            bodyBattery.minByOrNull { kotlin.math.abs(it.first - minute) }?.takeIf { kotlin.math.abs(it.first - minute) <= 18f }?.let {
+                drawCircle(energyStart.copy(alpha = 0.18f), 8.dp.toPx(), Offset(x(it.first), y(it.second)))
+                drawCircle(energyStart, 3.5.dp.toPx(), Offset(x(it.first), y(it.second)))
+            }
         }
     }
 }

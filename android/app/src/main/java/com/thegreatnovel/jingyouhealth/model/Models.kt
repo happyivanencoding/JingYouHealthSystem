@@ -82,6 +82,53 @@ data class BodyBatterySummary(
     val value: Double? = null,
 )
 
+data class IntradayPoint(
+    val timestamp: String,
+    val value: Float?,
+)
+
+data class StateActivity(
+    val id: String,
+    val name: String = "",
+    val type: String = "",
+    val startTime: String? = null,
+    val durationS: Double? = null,
+    val category: String? = null,
+)
+
+data class StressWindow(
+    val start: String? = null,
+    val end: String? = null,
+    val average: Float? = null,
+)
+
+data class StateTimelineSummary(
+    val latestBodyBattery: Float? = null,
+    val latestBodyBatteryAt: String? = null,
+    val bodyBatteryPeak: Float? = null,
+    val bodyBatteryPeakAt: String? = null,
+    val bodyBatteryDropSincePeak: Float? = null,
+    val bodyBatteryCharged: Float? = null,
+    val bodyBatteryDrained: Float? = null,
+    val latestStress: Float? = null,
+    val latestStressAt: String? = null,
+    val averageStress: Float? = null,
+    val highestStressWindow: StressWindow? = null,
+    val activityCount: Int = 0,
+)
+
+data class StateTimeline(
+    val date: String? = null,
+    val timezone: String? = null,
+    val generatedAt: String? = null,
+    val bodyBattery: List<IntradayPoint> = emptyList(),
+    val stress: List<IntradayPoint> = emptyList(),
+    val sleepStart: String? = null,
+    val sleepEnd: String? = null,
+    val activities: List<StateActivity> = emptyList(),
+    val summary: StateTimelineSummary = StateTimelineSummary(),
+)
+
 data class ActivitySummary(
     val id: String,
     val name: String = "",

@@ -12,6 +12,7 @@ import com.thegreatnovel.jingyouhealth.model.ChatThread
 import com.thegreatnovel.jingyouhealth.model.Dashboard
 import com.thegreatnovel.jingyouhealth.model.ThemeMode
 import com.thegreatnovel.jingyouhealth.model.Trends
+import com.thegreatnovel.jingyouhealth.model.StateTimeline
 import com.thegreatnovel.jingyouhealth.model.SleepOutcome
 import com.thegreatnovel.jingyouhealth.model.PersonalSleepReport
 import com.thegreatnovel.jingyouhealth.model.proposeSleepConfigurations
@@ -52,6 +53,7 @@ data class JingYouUiState(
     val refreshStatus: String? = null,
     val error: String? = null,
     val dashboard: Dashboard? = null,
+    val stateTimeline: StateTimeline? = null,
     val trends: Trends = Trends(),
     val activities: List<ActivitySummary> = emptyList(),
     val language: AppLanguage = AppLanguage.CHINESE,
@@ -287,10 +289,11 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
             val result = requestResult {
                 coroutineScope {
                     val dash = async { api.dashboard(token) }
+                    val timeline = async { api.stateTimeline(token) }
                     val trend = async { api.trends(token) }
                     val acts = async { api.activities(token) }
                     val threads = async { api.threads(token) }
-                    Quad(dash.await(), trend.await(), acts.await(), threads.await())
+                    Quint(dash.await(), timeline.await(), trend.await(), acts.await(), threads.await())
                 }
             }
             if (!isCurrentSession(token, generation) || request != healthGeneration) return@launch
@@ -299,9 +302,10 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
                     it.copy(
                         loading = false,
                         dashboard = loaded.a,
-                        trends = loaded.b,
-                        activities = loaded.c,
-                        threads = if (threadsAtStart == threadGeneration) loaded.d else it.threads,
+                        stateTimeline = loaded.b,
+                        trends = loaded.c,
+                        activities = loaded.d,
+                        threads = if (threadsAtStart == threadGeneration) loaded.e else it.threads,
                     )
                 }
                 ensureThread()
@@ -325,18 +329,20 @@ class JingYouViewModel(application: Application) : AndroidViewModel(application)
                     _state.update { it.copy(refreshStatus = "正在整理今天") }
                 }
                 coroutineScope {
+                    val timeline = async { api.stateTimeline(token) }
                     val trend = async { api.trends(token) }
                     val acts = async { api.activities(token) }
-                    Triple(dashboard, trend.await(), acts.await())
+                    Quad(dashboard, timeline.await(), trend.await(), acts.await())
                 }
             }
             if (!isCurrentSession(token, generation) || request != healthGeneration) return@launch
             result.onSuccess { refreshed ->
                 _state.update {
                     it.copy(
-                        dashboard = refreshed.first,
-                        trends = refreshed.second,
-                        activities = refreshed.third,
+                        dashboard = refreshed.a,
+                        stateTimeline = refreshed.b,
+                        trends = refreshed.c,
+                        activities = refreshed.d,
                         refreshStatus = "已更新",
                     )
                 }
@@ -601,3 +607,4 @@ private fun List<ChatThread>.touchThread(threadId: String, updatedAt: String, fi
 }
 
 private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
+private data class Quint<A, B, C, D, E>(val a: A, val b: B, val c: C, val d: D, val e: E)

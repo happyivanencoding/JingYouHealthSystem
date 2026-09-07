@@ -41,7 +41,7 @@ fun homeModuleLabel(module: HomeModule): String = when (module) {
     HomeModule.READINESS -> "今天的节奏"
     HomeModule.SLEEP -> "睡眠复盘"
     HomeModule.RECOVERY_SIGNALS -> "恢复线索"
-    HomeModule.DAILY_SIGNALS -> "身体信号"
+    HomeModule.DAILY_SIGNALS -> "今日状态"
     HomeModule.ACTIVITIES -> "最近运动"
     HomeModule.COACH -> "教练提问"
 }

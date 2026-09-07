@@ -8,6 +8,7 @@ import com.thegreatnovel.jingyouhealth.model.ChatThread
 import com.thegreatnovel.jingyouhealth.model.DailySummary
 import com.thegreatnovel.jingyouhealth.model.Dashboard
 import com.thegreatnovel.jingyouhealth.model.HrvSummary
+import com.thegreatnovel.jingyouhealth.model.IntradayPoint
 import com.thegreatnovel.jingyouhealth.model.MetricFreshness
 import com.thegreatnovel.jingyouhealth.model.ReadinessSummary
 import com.thegreatnovel.jingyouhealth.model.SleepSummary
@@ -16,6 +17,10 @@ import com.thegreatnovel.jingyouhealth.model.Trends
 import com.thegreatnovel.jingyouhealth.model.UserSummary
 import com.thegreatnovel.jingyouhealth.model.RecoveryComponent
 import com.thegreatnovel.jingyouhealth.model.SleepClockPoint
+import com.thegreatnovel.jingyouhealth.model.StateActivity
+import com.thegreatnovel.jingyouhealth.model.StateTimeline
+import com.thegreatnovel.jingyouhealth.model.StateTimelineSummary
+import com.thegreatnovel.jingyouhealth.model.StressWindow
 import com.thegreatnovel.jingyouhealth.model.CoachSleepSnapshot
 import com.thegreatnovel.jingyouhealth.model.CoachMemoryItem
 import com.thegreatnovel.jingyouhealth.model.TrainingStatus
@@ -39,6 +44,11 @@ class HealthApi(private val baseUrl: String = BuildConfig.API_BASE_URL) {
 
     suspend fun dashboard(token: String): Dashboard = withContext(Dispatchers.IO) {
         parseDashboard(JSONObject(request("GET", "/api/dashboard", token, null)))
+    }
+
+    suspend fun stateTimeline(token: String, date: String? = null): StateTimeline = withContext(Dispatchers.IO) {
+        val query = date?.let { "?date=${it.encodePath()}" }.orEmpty()
+        parseStateTimeline(JSONObject(request("GET", "/api/state-timeline$query", token, null)))
     }
 
     suspend fun refresh(token: String): Dashboard = withContext(Dispatchers.IO) {
@@ -281,6 +291,56 @@ class HealthApi(private val baseUrl: String = BuildConfig.API_BASE_URL) {
                     readiness = it.optStringOrNull("readiness"),
                 )
             },
+        )
+    }
+
+    private fun parseStateTimeline(root: JSONObject): StateTimeline {
+        fun intraday(key: String): List<IntradayPoint> {
+            val rows = root.optJSONArray(key) ?: JSONArray()
+            return List(rows.length()) { index ->
+                val row = rows.getJSONObject(index)
+                IntradayPoint(row.optString("timestamp"), row.optNullableDouble("value")?.toFloat())
+            }
+        }
+        val sleep = root.optJSONObject("sleep")
+        val summary = root.optJSONObject("summary")
+        val peak = summary?.optJSONObject("highest_stress_window")
+        val activities = root.optJSONArray("activities") ?: JSONArray()
+        return StateTimeline(
+            date = root.optStringOrNull("date"),
+            timezone = root.optStringOrNull("timezone"),
+            generatedAt = root.optStringOrNull("generated_at"),
+            bodyBattery = intraday("body_battery"),
+            stress = intraday("stress"),
+            sleepStart = sleep?.optStringOrNull("start"),
+            sleepEnd = sleep?.optStringOrNull("end"),
+            activities = List(activities.length()) { index ->
+                val row = activities.getJSONObject(index)
+                StateActivity(
+                    id = row.optString("activity_id"),
+                    name = row.optString("activity_name"),
+                    type = row.optString("activity_type"),
+                    startTime = row.optStringOrNull("start_time"),
+                    durationS = row.optNullableDouble("duration_s"),
+                    category = row.optStringOrNull("category"),
+                )
+            },
+            summary = StateTimelineSummary(
+                latestBodyBattery = summary?.optNullableDouble("latest_body_battery")?.toFloat(),
+                latestBodyBatteryAt = summary?.optStringOrNull("latest_body_battery_at"),
+                bodyBatteryPeak = summary?.optNullableDouble("body_battery_peak")?.toFloat(),
+                bodyBatteryPeakAt = summary?.optStringOrNull("body_battery_peak_at"),
+                bodyBatteryDropSincePeak = summary?.optNullableDouble("body_battery_drop_since_peak")?.toFloat(),
+                bodyBatteryCharged = summary?.optNullableDouble("body_battery_charged")?.toFloat(),
+                bodyBatteryDrained = summary?.optNullableDouble("body_battery_drained")?.toFloat(),
+                latestStress = summary?.optNullableDouble("latest_stress")?.toFloat(),
+                latestStressAt = summary?.optStringOrNull("latest_stress_at"),
+                averageStress = summary?.optNullableDouble("average_stress")?.toFloat(),
+                highestStressWindow = peak?.let {
+                    StressWindow(it.optStringOrNull("start"), it.optStringOrNull("end"), it.optNullableDouble("average")?.toFloat())
+                },
+                activityCount = summary?.optInt("activity_count") ?: 0,
+            ),
         )
     }
 

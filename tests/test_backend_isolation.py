@@ -15,7 +15,7 @@ import app  # noqa: E402
 import auth  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 from health_store import connect, utc_now  # noqa: E402
-from health_queries import dashboard, trends  # noqa: E402
+from health_queries import dashboard, state_timeline, trends  # noqa: E402
 
 
 class BackendIsolationTests(unittest.TestCase):
@@ -144,6 +144,33 @@ class BackendIsolationTests(unittest.TestCase):
         self.assertEqual(member["hrv"]["last_night_avg"], 72)
         self.assertNotEqual(owner["recent_activities"][0]["activity_id"], member["recent_activities"][0]["activity_id"])
         self.assertEqual(len(trends(self.owner, days=7)["daily"]), 1)
+
+    def test_state_timeline_is_user_scoped_and_keeps_invalid_stress_as_gap(self) -> None:
+        for user, stress_value in ((self.owner, 31), (self.member, 71)):
+            con = connect(user.health_db)
+            try:
+                con.execute(
+                    "UPDATE activities SET timezone='Europe/Paris', start_time_gmt='2026-09-05T16:00:00' WHERE source='garmin'"
+                )
+                con.execute(
+                    "INSERT INTO time_series_samples(source,metric,timestamp_key,timestamp_local,value) VALUES('garmin','stress_level','stress-valid','2026-09-05T20:00:00',?)",
+                    (stress_value,),
+                )
+                con.execute(
+                    "INSERT INTO time_series_samples(source,metric,timestamp_key,timestamp_local,value) VALUES('garmin','stress_level','stress-gap','2026-09-05T20:03:00',-1)"
+                )
+                con.commit()
+            finally:
+                con.close()
+
+        owner = state_timeline(self.owner, "2026-09-05")
+        member = state_timeline(self.member, "2026-09-05")
+        self.assertEqual(owner["timezone"], "Europe/Paris")
+        self.assertEqual(owner["stress"][0]["value"], 31)
+        self.assertIsNone(owner["stress"][1]["value"])
+        self.assertEqual(member["stress"][0]["value"], 71)
+        self.assertEqual(owner["activities"][0]["activity_id"], "owner-activity")
+        self.assertEqual(member["activities"][0]["activity_id"], "member-activity")
 
     def test_pull_refresh_uses_live_refresh_phase(self) -> None:
         completed = SimpleNamespace(returncode=0, stdout="ok", stderr="")
