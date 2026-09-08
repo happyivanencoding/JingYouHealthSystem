@@ -200,21 +200,21 @@ class BackendIsolationTests(unittest.TestCase):
 
         captured: list[dict] = []
 
-        def fake_run(command, **kwargs):
-            cwd = Path(command[command.index("-Cwd") + 1])
-            output = Path(command[command.index("-OutputPath") + 1])
-            context = json.loads((cwd / "context.json").read_text(encoding="utf-8"))
-            prompt = (cwd / "prompt.txt").read_text(encoding="utf-8")
+        def fake_transport(**kwargs):
+            prompt = kwargs["prompt"]
+            context = json.loads(prompt.split("BEGIN_CONTEXT_JSON\n", 1)[1].split("\nEND_CONTEXT_JSON", 1)[0])
             captured.append(context)
             expected_hrv = 61 if context["profile"]["display_name"] == "Owner Person" else 72
             self.assertEqual(context["health"]["today"]["hrv"]["last_night_avg"], expected_hrv)
             self.assertEqual(context["current_question"], context["conversation"][-1]["content"])
             self.assertIn("determine the language from context.current_question only", prompt)
             self.assertIn("Do not default to Chinese", prompt)
-            output.write_text(f"answer for {context['profile']['display_name']} hrv={expected_hrv}", encoding="utf-8")
-            return SimpleNamespace(returncode=0, stdout=b"\xa1control-output", stderr=b"")
+            return SimpleNamespace(
+                text=f"answer for {context['profile']['display_name']} hrv={expected_hrv}",
+                metadata={"engine": "test-model-transport"},
+            )
 
-        with patch.object(app.subprocess, "run", side_effect=fake_run):
+        with patch.object(app, "generate_text", side_effect=fake_transport):
             owner_answer = app.answer_thread(owner_thread["id"], self.owner)
             member_answer = app.answer_thread(member_thread["id"], self.member)
 

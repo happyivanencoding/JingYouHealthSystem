@@ -377,22 +377,26 @@ POST /api/chat/threads/{thread_id}/answer
 The backend:
 
 1. Resolves the authenticated user.
-2. Reads only that user's health DB, the latest user message metadata, and conversation history.
-3. Generates a per-turn `context.json` inside a per-user, per-thread temporary workspace. It includes the current user message id and a response-focus flag that tells Coach to answer the new question without repeating unchanged recent answers. When present, `context.sleep_analysis` includes the Android snapshot plus server labels `quality`, `latest_sleep_date`, `as_of`, `stale`, and `freshness`.
-4. Includes current-user Coach memory and related history when available. Forgotten keys are not rebuilt from old history unless the current user states them again.
-5. Starts AgentDock ACP Codex in `read-only` mode with that workspace as `cwd`.
-6. Accepts the JSON envelope `{ "answer": string, "memory_updates": [...] }` and displays/stores only `answer`; older plain-text ACP output remains supported.
-7. Persists the final assistant response into the same user's chat history and applies only validated memory updates sourced from the current user's original message.
-8. Removes the temporary turn workspace.
+2. Reads only that user's health DB, the latest user-message metadata, conversation history, and current-user Coach memory.
+3. Builds one bounded in-memory business payload containing the exact current question, conversation, health evidence, response-focus flags, optional sleep analysis, and selected memory. No per-turn `context.json`, prompt file, answer file, or user-scoped model workspace is created.
+4. Serializes that payload inline into the Coach prompt and calls the generic `server/model_transport.py::generate_text(...)` boundary. Business code supplies only prompt, model, reasoning effort, and timeout; it does not know about ACP session ids, `cwd`, modes, permissions, MCP, tools, or workspaces.
+5. The current ACP adapter uses the fixed neutral directory `%LOCALAPPDATA%\JingYouHealthSystem\acp-transport` only for Codex runtime configuration. It contains no health/chat/business payload. `additional_directories` is always empty. The generated Codex config disables web search, shell/unified-exec, browser/computer-use, apps/plugins, image/view, hooks, memory, multi-agent, skill search/host discovery, permission-tool features and project-document discovery; every currently configured user-level MCP server is explicitly disabled for this transport session.
+6. `server/run-health-agent.ps1` sends the already-complete prompt through AgentDock ACP/Codex. Its ACP mode is hard-coded to the least-privileged `read-only` mode because the current ACP protocol adapter requires an agent mode; there is no runtime fallback to `agent` or `agent-full-access`. The runner returns only a transport envelope containing model text plus event-audit metadata. Any observed tool-capability event or permission interaction makes the transport fail instead of persisting a result.
+7. The backend parses the JSON model envelope `{ "answer": string, "memory_updates": [...] }` (with the historical plain-text compatibility path), validates memory updates against the current user's original message, then persists the assistant answer and valid updates itself. The model never writes chat history, memory, reports, files, tracker state, or databases.
 
-The ACP sandbox was explicitly verified: a read-only session could read a marker inside its workspace and refused to read a marker outside it.
+Runtime architecture invariant:
+
+> **All runtime ACP model calls are transport-only. ACP is a temporary model transport, not an application agent runtime. All I/O, retrieval, persistence and orchestration belong to the application. Every ACP call must remain directly replaceable by a direct model API call without changing business logic.**
+
+`server/model_transport.py` is the only business-visible model boundary. If ACP is replaced by OpenAI Responses, DeepSeek, or another direct provider, the Coach payload construction, health retrieval, memory selection, output parsing/validation, persistence, and endpoint orchestration remain unchanged.
+
+There is one current Codex-ACP limitation that must not be mislabeled as solved: the installed `codex-acp`/Codex runtime does not expose a per-session `tools=[]` or a way to remove every host bootstrap item. A real post-change rollout had empty Codex base instructions and no JingYou project path/repository context, but Codex still injected fixed host-skill, permission/sandbox, global AGENTS, and neutral environment-context blocks. Those blocks are transport/runtime overhead only; the business prompt does not depend on them. The live transport smoke produced only `agent_message_chunk`, `completed`, `session_info_update`, and `usage_update`, with **0 tool-capability events and 0 permission interactions**. The neutral transport directory contained only `.codex/config.toml`.
 
 Current Coach model defaults:
 
 ```text
 gpt-5.6-sol
 reasoning=medium
-mode=read-only
 ```
 
 Environment overrides:
@@ -402,7 +406,9 @@ JINGYOU_COACH_MODEL
 JINGYOU_COACH_REASONING
 ```
 
-The current `/answer` endpoint is a blocking HTTP request. Android can show local typing/status animation while waiting. The Windows ACP runner writes the authoritative answer to a UTF-8 file; backend subprocess stdout/stderr are captured as raw bytes so localized PowerShell output cannot fail the request during decoding. True token/event streaming can be added later if the frontend requires it.
+The current `/answer` endpoint is a blocking HTTP request. Android can show local typing/status animation while waiting. The ACP helper receives the prompt on stdin and returns the transport envelope on stdout; no model-turn prompt/output files are used. True token/event streaming can be added later if the frontend requires it.
+
+The 2026-09-08 transport smoke used the same runtime path with `gpt-5.6-luna`/low reasoning and returned the exact requested sentinel in about 5.9 seconds. There is **no reliable JingYou before-migration token/time/cost baseline**, so no before/after percentage is claimed.
 
 Coach output language is locked to the **latest user question only**. Earlier conversation history, Android UI language, profile/display names, and health-data labels must not influence the reply language. The agent must answer entirely in the same language as the current question, except for unavoidable proper nouns, standard units, abbreviations, or quoted text. This behavior has been smoke-tested with Chinese, English, French, and Arabic prompts against the real ACP Coach path.
 
@@ -427,9 +433,9 @@ Completed:
 - Dashboard/trends/activities API.
 - Authenticated Garmin refresh.
 - Persistent chat threads/messages.
-- Scoped AgentDock ACP Coach answer generation.
-- Real ACP isolation test.
-- Backend regression tests for distinct sessions, Cloudflare identity mapping, physical health/chat DB isolation, and per-user ACP context.
+- Transport-only Coach model boundary with AgentDock/ACP as the current adapter.
+- Real ACP transport smoke with zero tool-capability events/permission interactions and no project-repo context.
+- Backend regression tests for distinct sessions, Cloudflare identity mapping, physical health/chat DB isolation, per-user model payloads, and the neutral transport boundary.
 - SQLite request connections are explicitly closed; FastAPI no longer leaves `health.db` / `app.db` handles open after requests.
 - Latest-state queries skip empty Garmin placeholder rows so Coach does not incorrectly report synchronized metrics as missing.
 - `health.thegreatnovel.com` DNS and Tunnel ingress are provisioned on the existing `TGN` remote-managed tunnel and route to `127.0.0.1:8788`.

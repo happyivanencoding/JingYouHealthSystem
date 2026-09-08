@@ -141,26 +141,28 @@ class CoachInsightsTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             SleepAnalysis.model_validate(bad_token)
 
-    def _fake_runner(self, captured: list[dict], answer_payload: object | str):
-        def run(command, **kwargs):
-            cwd = Path(command[command.index("-Cwd") + 1])
-            output = Path(command[command.index("-OutputPath") + 1])
-            captured.append(json.loads((cwd / "context.json").read_text(encoding="utf-8")))
+    def _context_from_prompt(self, prompt: str) -> dict:
+        payload = prompt.split("BEGIN_CONTEXT_JSON\n", 1)[1].split("\nEND_CONTEXT_JSON", 1)[0]
+        return json.loads(payload)
+
+    def _fake_transport(self, captured: list[dict], answer_payload: object | str):
+        def generate_text(**kwargs):
+            prompt = kwargs["prompt"]
+            captured.append(self._context_from_prompt(prompt))
             if isinstance(answer_payload, str):
                 text = answer_payload
             else:
                 text = json.dumps(answer_payload, ensure_ascii=False)
-            output.write_text(text, encoding="utf-8")
-            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+            return SimpleNamespace(text=text, metadata={"engine": "test-model-transport"})
 
-        return run
+        return generate_text
 
     def test_latest_user_without_snapshot_does_not_reuse_old_snapshot(self) -> None:
         thread = app.create_thread(app.ChatCreate(title="Insights"), self.owner)
         app.post_message(thread["id"], app.MessageCreate(content="old", sleep_analysis=analysis_payload()), self.owner)
         app.post_message(thread["id"], app.MessageCreate(content="new ordinary question"), self.owner)
         captured: list[dict] = []
-        with patch.object(app.subprocess, "run", side_effect=self._fake_runner(captured, {"answer": "  ok  ", "memory_updates": []})):
+        with patch.object(app, "generate_text", side_effect=self._fake_transport(captured, {"answer": "  ok  ", "memory_updates": []})):
             result = app.answer_thread(thread["id"], self.owner)
         self.assertEqual(result["content"], "ok")
         self.assertNotIn("sleep_analysis", captured[-1])
@@ -173,7 +175,7 @@ class CoachInsightsTests(unittest.TestCase):
         fake_health = {"today": {"sleep": {"date": "2026-09-06"}}, "trends": {}, "recent_activities": []}
         with (
             patch.object(app, "agent_context", return_value=fake_health),
-            patch.object(app.subprocess, "run", side_effect=self._fake_runner(captured, {"answer": "好的", "memory_updates": []})),
+            patch.object(app, "generate_text", side_effect=self._fake_transport(captured, {"answer": "好的", "memory_updates": []})),
         ):
             app.answer_thread(thread["id"], self.owner)
         insight = captured[-1]["sleep_analysis"]
@@ -188,7 +190,7 @@ class CoachInsightsTests(unittest.TestCase):
         app.post_message(owner_thread["id"], app.MessageCreate(content="owner", sleep_analysis=analysis_payload(through_date="2026-09-01")), self.owner)
         app.post_message(member_thread["id"], app.MessageCreate(content="member", sleep_analysis=analysis_payload(through_date="2026-09-02")), self.member)
         captured: list[dict] = []
-        with patch.object(app.subprocess, "run", side_effect=self._fake_runner(captured, "plain text fallback")):
+        with patch.object(app, "generate_text", side_effect=self._fake_transport(captured, "plain text fallback")):
             app.answer_thread(owner_thread["id"], self.owner)
             app.answer_thread(member_thread["id"], self.member)
         self.assertEqual(captured[0]["sleep_analysis"]["through_date"], "2026-09-01")
@@ -223,17 +225,18 @@ class CoachInsightsTests(unittest.TestCase):
         app.post_message(thread["id"], app.MessageCreate(content="换个问题：法国节假日特征怎么计算？"), self.owner)
         prompts: list[str] = []
 
-        def run(command, **kwargs):
-            cwd = Path(command[command.index("-Cwd") + 1])
-            output = Path(command[command.index("-OutputPath") + 1])
-            context = json.loads((cwd / "context.json").read_text(encoding="utf-8"))
-            prompts.append((cwd / "prompt.txt").read_text(encoding="utf-8"))
+        def generate_text(**kwargs):
+            prompt = kwargs["prompt"]
+            context = self._context_from_prompt(prompt)
+            prompts.append(prompt)
             self.assertTrue(context["response_focus"]["avoid_repeating_recent_answers"])
             self.assertEqual(context["current_question"], "换个问题：法国节假日特征怎么计算？")
-            output.write_text(json.dumps({"answer": "节假日特征使用法国全国法定节假日。", "memory_updates": []}), encoding="utf-8")
-            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+            return SimpleNamespace(
+                text=json.dumps({"answer": "节假日特征使用法国全国法定节假日。", "memory_updates": []}, ensure_ascii=False),
+                metadata={"engine": "test-model-transport"},
+            )
 
-        with patch.object(app.subprocess, "run", side_effect=run):
+        with patch.object(app, "generate_text", side_effect=generate_text):
             answer = app.answer_thread(thread["id"], self.owner)
         self.assertEqual(answer["content"], "节假日特征使用法国全国法定节假日。")
         self.assertIn("Answer that question first", prompts[0])
@@ -253,9 +256,9 @@ class CoachInsightsTests(unittest.TestCase):
         }
         captured: list[dict] = []
         with patch.object(
-            app.subprocess,
-            "run",
-            side_effect=self._fake_runner(captured, {"answer": "记住了。", "memory_updates": [valid_update]}),
+            app,
+            "generate_text",
+            side_effect=self._fake_transport(captured, {"answer": "记住了。", "memory_updates": [valid_update]}),
         ):
             result = app.answer_thread(thread["id"], self.owner)
         self.assertEqual(result["content"], "记住了。")
@@ -266,9 +269,9 @@ class CoachInsightsTests(unittest.TestCase):
         bad_message = app.post_message(bad_thread["id"], app.MessageCreate(content="普通问题"), self.owner)
         invalid_update = dict(valid_update, key="routine.invalid_source", source_message_ids=["assistant-not-user"])
         with patch.object(
-            app.subprocess,
-            "run",
-            side_effect=self._fake_runner([], {"answer": "仍然回答。", "memory_updates": [invalid_update]}),
+            app,
+            "generate_text",
+            side_effect=self._fake_transport([], {"answer": "仍然回答。", "memory_updates": [invalid_update]}),
         ):
             bad_result = app.answer_thread(bad_thread["id"], self.owner)
         self.assertEqual(bad_result["content"], "仍然回答。")

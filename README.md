@@ -1,12 +1,18 @@
 # JingYou HealthSystem
 
-个人 Garmin 数据 + AgentDock / ACP 健康分析平台。
+个人 Garmin 数据、原生 Android、长期健康数据库与 AI Coach 平台。
 
-当前阶段只建设 **Garmin Connect 数据获取层**。Android UI、健康分析逻辑和长期数据库后续再接。
+运行时模型调用遵守 **transport-only**：backend 负责健康/聊天/记忆数据读取、上下文选择、校验与持久化；AgentDock ACP 目前只作为可替换的模型 transport。
 
 ## 当前数据链
 
-Garmin Watch → Garmin Connect → `garmin-py` → AgentDock MCP (`garmin`) → 后续 ACP/Codex
+Garmin Watch → Garmin Connect → `garmin-py` / 本地数据库 → FastAPI backend → `model_transport` → 当前 AgentDock ACP/Codex（未来可替换 direct API）
+
+## Runtime model boundary
+
+所有产品运行时 ACP 调用都必须是 transport-only。模型不自行读取项目、数据库、文件、网页或 MCP，也不负责持久化和任务编排。当前唯一业务可见边界是 `server/model_transport.py`；ACP session/cwd/mode 等协议细节只允许存在于该 adapter 与 `server/run-health-agent.ps1` 内。
+
+当前 Codex ACP 仍会注入少量固定 host bootstrap，项目业务不得依赖这些内容；详见 `docs/BACKEND_API.md`。
 
 ## 已接入能力
 

@@ -20,6 +20,6 @@ The settings section `Coach 记住了什么` lists active memories and allows th
 
 Memory is capped at 120 active items, with up to 40 selected for a response and up to six related historical excerpts. Retrieval uses Unicode word overlap, Chinese character pairs, category and recency; it is not an embedding search. Model-generated suggestions that fail validation must not discard an otherwise usable answer.
 
-Context is provided inline with the request instructions, so Coach does not depend on filesystem tool availability to read its question or evidence. A private per-turn context file is retained only during execution.
+Context is serialized inline into the model request after the backend has already selected the current-user health, conversation and memory evidence. No per-turn context, prompt or answer file is created. The neutral ACP transport directory contains only runtime configuration and never receives user health/chat payloads.
 
 Validation includes per-user and cross-thread isolation, source validation, update/delete tombstones, multilingual retrieval, snapshot quality/freshness, hidden metadata, and malformed output envelopes. A real ACP run against an isolated synthetic profile persisted preferences and reused them in another thread while answering a changed question without repeating prior sleep statistics.
