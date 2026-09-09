@@ -181,7 +181,10 @@ def generate_text(
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ModelTransportError(f"ACP model transport failed to execute: {exc}") from exc
 
-    stdout = completed.stdout.decode("utf-8", errors="replace").lstrip("\ufeff").strip()
+    try:
+        stdout = completed.stdout.decode("utf-8").lstrip("\ufeff").strip()
+    except UnicodeDecodeError as exc:
+        raise ModelTransportError("ACP model transport returned non-UTF-8 stdout") from exc
     stderr = completed.stderr.decode("utf-8", errors="replace").strip()
     if completed.returncode != 0:
         detail = (stderr or stdout or "ACP model transport failed")[-1600:]

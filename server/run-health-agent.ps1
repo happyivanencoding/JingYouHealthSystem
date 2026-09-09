@@ -7,6 +7,14 @@ param(
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Security
 
+# The backend launches this helper with redirected stdio, so do not inherit a
+# Windows console code page for model text.  Keep both pipe directions UTF-8
+# and make the final stdout envelope ASCII-safe below.
+$utf8NoBom = [Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8NoBom
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
+
 $prompt = [Console]::In.ReadToEnd()
 if ([string]::IsNullOrWhiteSpace($prompt)) { throw 'Transport prompt is empty' }
 if (-not (Test-Path -LiteralPath $Cwd -PathType Container)) { throw "Neutral transport cwd does not exist: $Cwd" }
@@ -30,7 +38,8 @@ function Call-Rpc([string]$method, [object]$params, [switch]$notification) {
     $script:nextId++
     $body = @{ jsonrpc='2.0'; id=$script:nextId; method=$method; params=$params } | ConvertTo-Json -Depth 50 -Compress
   }
-  $response = Invoke-WebRequest -UseBasicParsing -Uri "$serverUrl/mcp" -Method Post -Headers $script:headers -ContentType 'application/json' -Body $body
+  $bodyBytes = [Text.Encoding]::UTF8.GetBytes($body)
+  $response = Invoke-WebRequest -UseBasicParsing -Uri "$serverUrl/mcp" -Method Post -Headers $script:headers -ContentType 'application/json; charset=utf-8' -Body $bodyBytes
   if ($response.Headers['Mcp-Session-Id']) { $script:headers['Mcp-Session-Id'] = $response.Headers['Mcp-Session-Id'] }
   if ($notification) { return $null }
   $content = $response.Content
@@ -124,7 +133,7 @@ try {
       mode = 'read-only'
     }
   }
-  [Console]::Out.Write(($envelope | ConvertTo-Json -Depth 12 -Compress))
+  [Console]::Out.Write(($envelope | ConvertTo-Json -Depth 12 -Compress -EscapeHandling EscapeNonAscii))
 } finally {
   if ($runId) {
     # The run may already be completed; cancellation is intentionally not used as a fallback path.

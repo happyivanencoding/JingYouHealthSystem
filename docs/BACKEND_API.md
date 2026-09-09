@@ -384,6 +384,8 @@ The backend:
 6. `server/run-health-agent.ps1` sends the already-complete prompt through AgentDock ACP/Codex. Its ACP mode is hard-coded to the least-privileged `read-only` mode because the current ACP protocol adapter requires an agent mode; there is no runtime fallback to `agent` or `agent-full-access`. The runner returns only a transport envelope containing model text plus event-audit metadata. Any observed tool-capability event or permission interaction makes the transport fail instead of persisting a result.
 7. The backend parses the JSON model envelope `{ "answer": string, "memory_updates": [...] }` (with the historical plain-text compatibility path), validates memory updates against the current user's original message, then persists the assistant answer and valid updates itself. The model never writes chat history, memory, reports, files, tracker state, or databases.
 
+The redirected Python ↔ PowerShell transport boundary is explicitly UTF-8. The runner pins stdin/stdout to UTF-8, sends MCP JSON request bodies as UTF-8 bytes, and escapes non-ASCII characters in the final stdout JSON envelope. `model_transport.py` decodes stdout strictly as UTF-8; invalid transport bytes fail the turn instead of being replaced with `�` and saved into chat history. This is transport framing only and does not change Coach business logic.
+
 Runtime architecture invariant:
 
 > **All runtime ACP model calls are transport-only. ACP is a temporary model transport, not an application agent runtime. All I/O, retrieval, persistence and orchestration belong to the application. Every ACP call must remain directly replaceable by a direct model API call without changing business logic.**

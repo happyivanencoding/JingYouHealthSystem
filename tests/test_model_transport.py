@@ -80,6 +80,30 @@ class ModelTransportTests(unittest.TestCase):
         self.assertEqual(result.metadata["tool_event_count"], 0)
         self.assertEqual(result.metadata["permission_interaction_count"], 0)
 
+    def test_generate_text_preserves_utf8_model_text(self) -> None:
+        envelope = {
+            "text": "中文正常",
+            "audit": {"tool_event_count": 0, "permission_interaction_count": 0},
+        }
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(envelope, ensure_ascii=False).encode("utf-8"),
+            stderr=b"",
+        )
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"LOCALAPPDATA": temp}, clear=False), patch.object(
+            model_transport.subprocess, "run", return_value=completed
+        ):
+            result = model_transport.generate_text(prompt="请只返回中文", model="gpt-test", reasoning="low", timeout_seconds=30)
+        self.assertEqual(result.text, "中文正常")
+
+    def test_generate_text_rejects_non_utf8_stdout(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout=b'{"text":"\xff"}', stderr=b"")
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"LOCALAPPDATA": temp}, clear=False), patch.object(
+            model_transport.subprocess, "run", return_value=completed
+        ):
+            with self.assertRaisesRegex(model_transport.ModelTransportError, "non-UTF-8 stdout"):
+                model_transport.generate_text(prompt="payload only", model="gpt-test", reasoning="low", timeout_seconds=30)
+
 
 if __name__ == "__main__":
     unittest.main()
