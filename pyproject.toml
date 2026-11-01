@@ -8,6 +8,7 @@ dependencies = [
   "fastapi==0.117.1",
   "uvicorn==0.36.0",
   "PyJWT[crypto]==2.10.1",
+  "garmin-connect-personal-api-python>=1.0.0",
 ]
 
 [tool.uv]

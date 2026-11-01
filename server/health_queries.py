@@ -45,17 +45,40 @@ def _timeline_timezone(con: sqlite3.Connection, target: date) -> tuple[timezone,
         (target.isoformat(),),
     ).fetchone()
     offset = timedelta(0)
+    has_offset = False
     if raw is not None:
         payload = json.loads(raw["payload_json"])
-        local = datetime.fromisoformat(str(payload["startTimestampLocal"])).replace(tzinfo=None)
-        gmt = datetime.fromisoformat(str(payload["startTimestampGMT"])).replace(tzinfo=None)
-        offset = local - gmt
+        if isinstance(payload, dict) and payload.get("startTimestampLocal") and payload.get("startTimestampGMT"):
+            local = datetime.fromisoformat(str(payload["startTimestampLocal"])).replace(tzinfo=None)
+            gmt = datetime.fromisoformat(str(payload["startTimestampGMT"])).replace(tzinfo=None)
+            offset = local - gmt
+            has_offset = True
+    if not has_offset:
+        # The Personal API's daily stress report has summary values only.
+        # Its Body Battery report retains the paired local/GMT timestamps.
+        body = con.execute(
+            """SELECT payload_json FROM raw_records
+               WHERE source='garmin' AND kind='body_battery_range' AND record_key=?""",
+            (f"{target.isoformat()}:{target.isoformat()}",),
+        ).fetchone()
+        if body:
+            reports = json.loads(body["payload_json"])
+            if isinstance(reports, list):
+                report = next(
+                    (r for r in reports if isinstance(r, dict) and r.get("date") == target.isoformat()),
+                    None,
+                )
+                if report and report.get("startTimestampLocal") and report.get("startTimestampGMT"):
+                    local = datetime.fromisoformat(report["startTimestampLocal"]).replace(tzinfo=None)
+                    gmt = datetime.fromisoformat(report["startTimestampGMT"]).replace(tzinfo=None)
+                    offset = local - gmt
+                    has_offset = True
     activity = con.execute(
         """SELECT timezone,start_time,start_time_gmt FROM activities
              WHERE source='garmin' AND substr(start_time,1,10)<=? ORDER BY start_time DESC LIMIT 1""",
         (target.isoformat(),),
     ).fetchone()
-    if raw is None and activity is not None and activity["start_time"] and activity["start_time_gmt"]:
+    if not has_offset and activity is not None and activity["start_time"] and activity["start_time_gmt"]:
         local = datetime.fromisoformat(str(activity["start_time"])).replace(tzinfo=None)
         gmt = datetime.fromisoformat(str(activity["start_time_gmt"])).replace(tzinfo=None)
         offset = local - gmt

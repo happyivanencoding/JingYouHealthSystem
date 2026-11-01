@@ -72,13 +72,18 @@ def nested(obj: Any, *path: str) -> Any:
     return cur
 
 
+def first_present(*values: Any) -> Any:
+    return next((value for value in values if value is not None), None)
+
+
 class Sync:
-    def __init__(self, *, refresh: bool = False, delay: float = 0.12):
+    def __init__(self, *, refresh: bool = False, delay: float = 0.12, client: Any = None):
         self.refresh = refresh
         self.delay = delay
         self.con = connect(DB_PATH)
-        self.client = Garmin()
-        self.client.login(tokenstore=str(GARMIN_HOME))
+        self.client = client if client is not None else Garmin()
+        if client is None:
+            self.client.login(tokenstore=str(GARMIN_HOME))
         self.calls = 0
         self.writes = 0
         FIT_DIR.mkdir(parents=True, exist_ok=True)
@@ -86,6 +91,9 @@ class Sync:
     def close(self):
         self.con.commit()
         self.con.close()
+        close_client = getattr(self.client, "close", None)
+        if callable(close_client):
+            close_client()
 
     def has_raw(self, kind: str, key: str) -> bool:
         if self.refresh:
@@ -146,6 +154,13 @@ class Sync:
                 self.con.commit()
                 return None
             except Exception as exc:
+                # Personal API permission failures and rate limits must not be
+                # archived as successful missing-day measurements.
+                status = getattr(exc, "status_code", None)
+                if status == 429 and attempt < len(delays) - 1:
+                    continue
+                if status in {401, 403, 429, 500, 502, 503, 504}:
+                    raise
                 put_raw(
                     self.con,
                     "garmin",
@@ -165,17 +180,17 @@ class Sync:
         old = dict(existing) if existing else {}
         dto = (sleep or {}).get("dailySleepDTO", {}) if isinstance(sleep, dict) else {}
         values = {
-            "steps": nested(stats, "totalSteps") or old.get("steps"),
-            "resting_hr": nested(heart, "restingHeartRate") or nested(stats, "restingHeartRate") or old.get("resting_hr"),
-            "avg_stress": nested(stress, "avgStressLevel") or old.get("avg_stress"),
-            "calories": nested(stats, "totalKilocalories") or nested(stats, "totalCalories") or old.get("calories"),
+            "steps": first_present(nested(stats, "totalSteps"), old.get("steps")),
+            "resting_hr": first_present(nested(heart, "restingHeartRate"), nested(stats, "restingHeartRate"), old.get("resting_hr")),
+            "avg_stress": first_present(nested(stress, "avgStressLevel"), nested(stats, "avgStressLevel"), old.get("avg_stress")),
+            "calories": first_present(nested(stats, "totalKilocalories"), nested(stats, "totalCalories"), old.get("calories")),
             "active_min": nested(stats, "activeSeconds") / 60 if isinstance(nested(stats, "activeSeconds"), (int, float)) else old.get("active_min"),
-            "sleep_sec": dto.get("sleepTimeSeconds") or old.get("sleep_sec"),
-            "deep_sleep_sec": dto.get("deepSleepSeconds") or old.get("deep_sleep_sec"),
-            "rem_sleep_sec": dto.get("remSleepSeconds") or old.get("rem_sleep_sec"),
-            "body_battery_charged": (body or {}).get("charged") if isinstance(body, dict) else old.get("body_battery_charged"),
-            "body_battery_drained": (body or {}).get("drained") if isinstance(body, dict) else old.get("body_battery_drained"),
-            "floors": nested(stats, "floorsAscended") or old.get("floors"),
+            "sleep_sec": first_present(dto.get("sleepTimeSeconds"), old.get("sleep_sec")),
+            "deep_sleep_sec": first_present(dto.get("deepSleepSeconds"), old.get("deep_sleep_sec")),
+            "rem_sleep_sec": first_present(dto.get("remSleepSeconds"), old.get("rem_sleep_sec")),
+            "body_battery_charged": first_present(nested(body, "charged"), old.get("body_battery_charged")),
+            "body_battery_drained": first_present(nested(body, "drained"), old.get("body_battery_drained")),
+            "floors": first_present(nested(stats, "floorsAscended"), old.get("floors")),
             "intensity_min": old.get("intensity_min"),
         }
         self.con.execute(
@@ -245,7 +260,7 @@ class Sync:
         dto = payload.get("dailySleepDTO") or {}
         if not dto:
             return
-        score = nested(dto, "sleepScores", "overall", "value") or dto.get("sleepScore")
+        score = first_present(nested(dto, "sleepScores", "overall", "value"), dto.get("sleepScore"))
         self.con.execute(
             """INSERT INTO sleep_sessions
                (source,date,sleep_score,sleep_time_sec,deep_sleep_sec,rem_sleep_sec,
@@ -618,6 +633,220 @@ class Sync:
             raise
 
 
+class PersonalSync(Sync):
+    """Garmin's documented, read-only Personal API; no Garmin SSO session."""
+
+    def __init__(self, *, refresh: bool = False, delay: float = 0.12, client: Any = None):
+        if client is None:
+            from garmin_personal_api import GarminPersonalApiClient, PersonalApiAuthenticator
+
+            key_file = GARMIN_HOME / "personal-api-key"
+            key = key_file.read_text(encoding="utf-8").strip()
+            if not key:
+                raise ValueError(f"Empty Personal API key file: {key_file}")
+            with PersonalApiAuthenticator(
+                bearer_token_cache_file=GARMIN_HOME / "personal-api-bearer-token.json"
+            ) as authenticator:
+                token = authenticator.obtain_token(key)
+            client = GarminPersonalApiClient(token.access_token)
+        super().__init__(refresh=refresh, delay=delay, client=client)
+
+    @staticmethod
+    def _day(payload: Any, day: str) -> dict[str, Any] | None:
+        if isinstance(payload, dict):
+            for field in ("dailySummaries", "summaries", "reports", "data"):
+                if isinstance(payload.get(field), list):
+                    return PersonalSync._day(payload[field], day)
+            return payload
+        if not isinstance(payload, list):
+            return None
+        matching = [
+            item for item in payload
+            if isinstance(item, dict)
+            and str(item.get("calendarDate") or item.get("date") or item.get("summaryDate"))[:10] == day
+        ]
+        if matching:
+            return matching[0]
+        if len(payload) == 1 and isinstance(payload[0], dict):
+            record = payload[0]
+            return record if not any(
+                record.get(field) for field in ("calendarDate", "date", "summaryDate")
+            ) else None
+        return None
+
+    @staticmethod
+    def _daily_stats(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(payload, dict):
+            return None
+        # Garmin Personal API daily summaries v2 have nested topic values.
+        # Map only measurements consumed by the legacy normalized schema.
+        return {
+            **payload,
+            "totalSteps": first_present(nested(payload, "movement", "steps", "value"), payload.get("totalSteps")),
+            "floorsAscended": first_present(nested(payload, "movement", "floorsAscended", "value"), payload.get("floorsAscended")),
+            "totalKilocalories": first_present(nested(payload, "calories", "burnedTotal"), payload.get("totalKilocalories")),
+            "restingHeartRate": first_present(nested(payload, "heartRate", "restingValue"), payload.get("restingHeartRate")),
+            "avgStressLevel": first_present(nested(payload, "stress", "avgLevel"), payload.get("avgStressLevel")),
+        }
+
+    @staticmethod
+    def _sleep_payload(payload: Any) -> Any:
+        if not isinstance(payload, dict) or "dailySleepDTO" in payload:
+            return payload
+        if "sleepTimeSeconds" not in payload:
+            return None
+        # The official endpoint returns dailySleepDTO fields at the root.
+        # Local timestamps are wall-clock milliseconds encoded on a UTC axis.
+        dto = dict(payload)
+        for key in (
+            "sleepStartTimestampLocal", "sleepEndTimestampLocal",
+            "sleepStartTimestampGMT", "sleepEndTimestampGMT",
+        ):
+            value = dto.get(key)
+            if isinstance(value, (int, float)):
+                stamp = datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+                dto[key] = stamp.strftime("%Y-%m-%dT%H:%M:%S")
+        return {"dailySleepDTO": dto}
+
+    def sync_static(self, start: date, end: date):
+        self.call(
+            "profile_settings", "current", self.client.get_user_profile_settings
+        )
+        self.con.commit()
+
+    def sync_daily(self, start: date, end: date):
+        total = (end - start).days + 1
+        for idx, d in enumerate(daterange(start, end), 1):
+            day = d.isoformat()
+            stats = self.call(
+                "daily_stats", day,
+                lambda: self._daily_stats(
+                    self._day(self.client.get_daily_summaries(day, day), day)
+                ),
+                event_date=day,
+            )
+            steps = self.call(
+                "daily_steps", day,
+                lambda: self._day(self.client.get_daily_steps(day, day), day),
+                event_date=day,
+            )
+            if isinstance(steps, dict):
+                stats = dict(stats) if isinstance(stats, dict) else {}
+                if stats.get("totalSteps") is None:
+                    stats["totalSteps"] = first_present(steps.get("totalSteps"), steps.get("steps"))
+            heart = self.call(
+                "heart_rate_raw", day, self.client.get_daily_heart_rate, day,
+                event_date=day,
+            )
+            stress = self.call(
+                "stress_raw", day,
+                lambda: self._day(self.client.get_daily_stress(day, day), day),
+                event_date=day,
+            )
+            if isinstance(stress, dict) and isinstance(stress.get("values"), dict):
+                stress = dict(stress)
+                stress.setdefault(
+                    "avgStressLevel", stress["values"].get("overallStressLevel")
+                )
+            spo2 = self.call(
+                "spo2_raw", day, self.client.get_daily_spo2, day,
+                event_date=day,
+            )
+            self.call(
+                "fitness_age_raw", day, self.client.get_fitness_age, day,
+                event_date=day,
+            )
+            self.call(
+                "hydration_raw", day,
+                lambda: self._day(self.client.get_daily_hydration(day, day), day),
+                event_date=day,
+            )
+            sleep_raw = self.call(
+                "sleep_raw", day, self.client.get_daily_sleep, day,
+                event_date=day,
+            )
+            sleep = self._sleep_payload(sleep_raw)
+            hrv = self.call(
+                "hrv_raw", day, self.client.get_daily_hrv, day,
+                event_date=day,
+            )
+            body = self.call(
+                "body_battery_range", f"{day}:{day}",
+                self.client.get_daily_body_battery, day, day,
+                event_date=day,
+            )
+            body_day = self._day(body, day)
+            if body_day:
+                for row in body_day.get("bodyBatteryValuesArray") or []:
+                    if isinstance(row, list) and len(row) >= 2:
+                        put_sample(
+                            self.con, "garmin", "body_battery",
+                            str(row[0]), row[1], timestamp_gmt=epoch_iso(row[0]),
+                            raw=row,
+                        )
+            self.normalize_sleep(day, sleep)
+            self.normalize_hrv(day, hrv)
+            self.put_daily(day, stats=stats, heart=heart, stress=stress, sleep=sleep, body=body_day)
+            self.normalize_series(heart, stress, spo2, None)
+            self.con.commit()
+            if idx == 1 or idx % 10 == 0 or idx == total:
+                print(f"PERSONAL_DAILY {idx}/{total} {day} calls={self.calls}", flush=True)
+
+    def _sync_personal_activities(self, *, limit: int | None):
+        summaries: list[dict[str, Any]] = []
+        offset = 0
+        while limit is None or offset < limit:
+            page_size = min(100, limit - offset) if limit is not None else 100
+            result = self.client.search_activities(start=offset, limit=page_size)
+            page = result if isinstance(result, list) else (
+                result.get("activities", []) if isinstance(result, dict) else []
+            )
+            if not isinstance(page, list) or not page:
+                break
+            summaries.extend(item for item in page if isinstance(item, dict))
+            offset += len(page)
+            if len(page) < page_size:
+                break
+
+        kind = "activity_list_recent" if limit is not None else "activity_list_all"
+        key = "latest" if limit is not None else "all"
+        put_raw(self.con, "garmin", kind, key, summaries)
+        for summary in summaries:
+            activity_id = summary.get("activityId")
+            if not activity_id:
+                continue
+            aid = str(activity_id)
+            put_raw(
+                self.con, "garmin", "activity_summary", aid, summary,
+                event_date=str(summary.get("startTimeLocal") or "")[:10] or None,
+            )
+            self.normalize_activity(summary)
+            detail = self.call("activity", aid, self.client.get_activity, aid)
+            if isinstance(detail, dict):
+                self.normalize_activity(detail)
+            fit_path = FIT_DIR / f"{aid}.zip"
+            if not fit_path.exists():
+                try:
+                    fit_path.write_bytes(self.client.download_activity(aid))
+                except Exception as exc:
+                    status = getattr(exc, "status_code", None)
+                    if status in {401, 403, 429}:
+                        raise
+                    print(f"PERSONAL_FIT_SKIP {aid} {type(exc).__name__}", flush=True)
+            self.con.execute(
+                "UPDATE activities SET fit_path=? WHERE source='garmin' AND activity_id=?",
+                (str(fit_path.relative_to(USER_ROOT)) if fit_path.exists() else None, aid),
+            )
+            self.con.commit()
+        print(f"PERSONAL_ACTIVITIES {len(summaries)}", flush=True)
+
+    def sync_activities(self):
+        self._sync_personal_activities(limit=None)
+
+    def sync_recent_activities(self, limit: int = 20):
+        self._sync_personal_activities(limit=limit)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile")
@@ -625,6 +854,7 @@ def main():
     parser.add_argument("--start", default=DEFAULT_START.isoformat())
     parser.add_argument("--end", default=date.today().isoformat())
     parser.add_argument("--phase", choices=("all", "static", "daily", "activities", "refresh"), default="all")
+    parser.add_argument("--provider", choices=("auto", "personal", "legacy"), default="auto")
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--delay", type=float, default=0.12)
     args = parser.parse_args()
@@ -633,7 +863,13 @@ def main():
     print(f"PROFILE {args.profile or user_id} -> {user_id}", flush=True)
     start = date.fromisoformat(args.start)
     end = date.fromisoformat(args.end)
-    sync = Sync(refresh=args.refresh, delay=args.delay)
+    key_exists = (GARMIN_HOME / "personal-api-key").is_file()
+    use_personal = args.provider == "personal" or (args.provider == "auto" and key_exists)
+    if args.provider == "personal" and not key_exists:
+        parser.error(f"Personal API key is missing for user {user_id}")
+    sync_type = PersonalSync if use_personal else Sync
+    print(f"GARMIN_PROVIDER {'personal' if use_personal else 'legacy'}", flush=True)
+    sync = sync_type(refresh=args.refresh, delay=args.delay)
     try:
         sync.run(start, end, args.phase)
     finally:
